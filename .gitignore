@@ -1,3 +1,5 @@
 target/
 *.xlsx
 !tests/fixtures/*.xlsx
+# Windows NTFS alternate-data-stream droppings (WSL exposes them as files)
+*:Zone.Identifier
