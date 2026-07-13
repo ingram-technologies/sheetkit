@@ -9,6 +9,7 @@ mod mcp;
 mod repl;
 mod rpc;
 mod serve;
+mod store;
 mod tools;
 
 fn main() -> std::io::Result<()> {
@@ -21,6 +22,10 @@ fn main() -> std::io::Result<()> {
                 addr: "127.0.0.1:7373".to_string(),
                 data_dir: None,
                 token: std::env::var("SHEETD_TOKEN").ok().filter(|t| !t.is_empty()),
+                max_resident: 64,
+                idle_secs: 900,
+                gc_days: 0,
+                max_cells: 2_000_000,
             };
             let mut it = args.iter().skip(1);
             while let Some(arg) = it.next() {
@@ -28,8 +33,20 @@ fn main() -> std::io::Result<()> {
                     "--addr" => opts.addr = expect_value(&mut it, "--addr")?,
                     "--data-dir" => opts.data_dir = Some(expect_value(&mut it, "--data-dir")?.into()),
                     "--token" => opts.token = Some(expect_value(&mut it, "--token")?),
+                    "--max-resident" => {
+                        opts.max_resident = parse_num(&expect_value(&mut it, "--max-resident")?)?
+                    }
+                    "--idle-secs" => {
+                        opts.idle_secs = parse_num(&expect_value(&mut it, "--idle-secs")?)? as u64
+                    }
+                    "--gc-days" => {
+                        opts.gc_days = parse_num(&expect_value(&mut it, "--gc-days")?)? as u64
+                    }
+                    "--max-cells" => {
+                        opts.max_cells = parse_num(&expect_value(&mut it, "--max-cells")?)? as u64
+                    }
                     other => {
-                        eprintln!("unknown flag {other:?}\nusage: sheetd serve [--addr HOST:PORT] [--data-dir DIR] [--token TOKEN]");
+                        eprintln!("unknown flag {other:?}\nusage: sheetd serve [--addr HOST:PORT] [--data-dir DIR] [--token TOKEN] [--max-resident N] [--idle-secs N] [--gc-days N] [--max-cells N]");
                         std::process::exit(2);
                     }
                 }
@@ -45,6 +62,12 @@ fn main() -> std::io::Result<()> {
             std::process::exit(2);
         }
     }
+}
+
+fn parse_num(v: &str) -> std::io::Result<usize> {
+    v.parse().map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{v:?} is not a number"))
+    })
 }
 
 fn expect_value(it: &mut std::iter::Skip<std::slice::Iter<'_, String>>, flag: &str) -> std::io::Result<String> {

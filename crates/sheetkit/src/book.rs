@@ -118,6 +118,21 @@ impl Book {
         Ok(())
     }
 
+    /// Force a full re-evaluation (needed after replaying diff blobs).
+    pub fn evaluate(&mut self) {
+        self.um.evaluate();
+    }
+
+    /// Number of non-empty cells across all sheets — the memory driver, used
+    /// for admission control.
+    pub fn non_empty_count(&self) -> u64 {
+        let mut n = 0u64;
+        for sheet in 0..self.sheet_names().len() as u32 {
+            self.for_each_cell(sheet, |_, _, _| n += 1);
+        }
+        n
+    }
+
     /// Import a workbook from xlsx bytes (no file needed).
     pub fn from_xlsx_bytes(bytes: &[u8], name: &str) -> Result<Book> {
         let workbook = import::load_from_xlsx_bytes(bytes, name, LOCALE, TIMEZONE)

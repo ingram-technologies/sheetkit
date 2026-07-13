@@ -210,6 +210,19 @@ impl Manager {
         self.sessions.contains_key(id)
     }
 
+    pub fn len(&self) -> usize {
+        self.sessions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sessions.is_empty()
+    }
+
+    /// Drop a session without erroring when it is already gone (eviction).
+    pub fn remove(&mut self, id: &str) -> bool {
+        self.sessions.remove(id).is_some()
+    }
+
     pub fn get_mut(&mut self, id: &str) -> Result<&mut Session> {
         if !self.sessions.contains_key(id) {
             let open = if self.sessions.is_empty() {

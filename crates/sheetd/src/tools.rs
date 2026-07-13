@@ -3,8 +3,10 @@
 //! out, with optional blob persistence and an observer for realtime fan-out.
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value as Json};
 use sheetkit::book::Book;
@@ -13,12 +15,17 @@ use sheetkit::session::{Manager, Session};
 use sheetkit::view::{self, Mode, ViewOptions};
 use sheetkit::{Error, Result};
 
+use crate::store::{JournalHistory, Store};
+
 /// What one script run did — everything a realtime channel needs to fan out.
 pub struct ExecEvent {
     pub workbook_id: String,
     pub principal: String,
     pub cmd_id: Option<String>,
     pub ok: bool,
+    /// Monotonic per-workbook sequence, assigned when the exec changed state
+    /// (0 for read-only execs, which fan nothing out).
+    pub seq: u64,
     /// Per-command result lines (already human/model readable).
     pub summary: String,
     /// Changed cells, capped at [`EVENT_DELTA_CAP`]: `(addr, old, new)`.
@@ -26,6 +33,9 @@ pub struct ExecEvent {
     pub delta_total: usize,
     /// The engine's opaque diff blob for same-version replicas (may be empty).
     pub diffs: Vec<u8>,
+    /// The book was swapped wholesale (restore, journal undo, file replace):
+    /// the diff blob cannot express it — replicas must refetch.
+    pub resync: bool,
     /// `(line number, message)` when the script stopped early.
     pub error: Option<(usize, String)>,
 }
@@ -38,14 +48,40 @@ pub trait ExecObserver: Send {
     fn exec_finished(&self, _event: &ExecEvent) {}
 }
 
+/// The `applied` frame for an exec — the same JSON goes to the journal and
+/// onto the channel, so replay resends exact bytes.
+pub fn applied_frame(e: &ExecEvent) -> Json {
+    use base64::Engine as _;
+    json!({
+        "type": "applied",
+        "seq": e.seq,
+        "principal": e.principal,
+        "cmd_id": e.cmd_id,
+        "ok": e.ok,
+        "summary": e.summary,
+        "delta": e.delta.iter().map(|(a, o, n)| json!([a, o, n])).collect::<Vec<Json>>(),
+        "delta_total": e.delta_total,
+        "diffs_b64": base64::engine::general_purpose::STANDARD.encode(&e.diffs),
+        "resync": e.resync,
+    })
+}
+
 pub struct Tools {
     pub manager: Manager,
-    /// Blob store directory: every mutation persists `{id}.ic`, and unknown
-    /// ids rehydrate from it (server mode).
-    pub data_dir: Option<PathBuf>,
+    /// Blob store: source of truth in server mode. Sessions are a cache over
+    /// it — persisted on every mutation, rehydrated on demand, evictable.
+    pub store: Option<Store>,
+    store_dir: Option<PathBuf>,
     /// Server mode uses stable random ids instead of the wb1/wb2 counter.
     pub random_ids: bool,
     pub observer: Option<Box<dyn ExecObserver>>,
+    /// Reject imports with more non-empty cells than this (0 = unlimited).
+    pub max_cells: u64,
+    /// Evict least-recently-used sessions past this count (0 = unlimited).
+    pub max_resident: usize,
+    last_access: HashMap<String, Instant>,
+    /// Sequence counters for workbooks without a store (ephemeral mode).
+    mem_seq: HashMap<String, u64>,
     id_salt: u64,
 }
 
@@ -53,11 +89,105 @@ impl Tools {
     pub fn new() -> Tools {
         Tools {
             manager: Manager::new(),
-            data_dir: None,
+            store: None,
+            store_dir: None,
             random_ids: false,
             observer: None,
+            max_cells: 0,
+            max_resident: 0,
+            last_access: HashMap::new(),
+            mem_seq: HashMap::new(),
             id_salt: 0,
         }
+    }
+
+    pub fn with_store(dir: PathBuf) -> Tools {
+        let mut t = Tools::new();
+        t.store = Some(Store::new(dir.clone()));
+        t.store_dir = Some(dir);
+        t
+    }
+
+    pub fn current_seq(&self, id: &str) -> u64 {
+        match &self.store {
+            Some(store) => store.current_seq(id),
+            None => self.mem_seq.get(id).copied().unwrap_or(0),
+        }
+    }
+
+    fn next_seq(&mut self, id: &str) -> u64 {
+        let n = self.current_seq(id) + 1;
+        if self.store.is_none() {
+            self.mem_seq.insert(id.to_string(), n);
+        }
+        n
+    }
+
+    /// Journal frames with `seq > after` (channel replay).
+    pub fn frames_after(&self, id: &str, after: u64) -> Vec<Json> {
+        self.store
+            .as_ref()
+            .map(|s| s.frames_after(id, after))
+            .unwrap_or_default()
+    }
+
+    fn touch(&mut self, id: &str) {
+        self.last_access.insert(id.to_string(), Instant::now());
+    }
+
+    /// Evict least-recently-used sessions above `max_resident`, never the one
+    /// named `keep`. State is already persisted eagerly, so eviction is a drop.
+    fn enforce_cap(&mut self, keep: &str) {
+        if self.max_resident == 0 || self.store.is_none() {
+            return;
+        }
+        while self.manager.len() > self.max_resident {
+            let Some(victim) = self
+                .last_access
+                .iter()
+                .filter(|(id, _)| id.as_str() != keep && self.manager.contains(id))
+                .min_by_key(|(_, t)| **t)
+                .map(|(id, _)| id.clone())
+            else {
+                break;
+            };
+            self.manager.remove(&victim);
+            self.last_access.remove(&victim);
+        }
+    }
+
+    /// Drop sessions idle for longer than `ttl`; returns the evicted ids.
+    /// Only meaningful with a store (nothing would survive otherwise).
+    pub fn evict_idle(&mut self, ttl: Duration) -> Vec<String> {
+        if self.store.is_none() {
+            return vec![];
+        }
+        let now = Instant::now();
+        let victims: Vec<String> = self
+            .last_access
+            .iter()
+            .filter(|(id, t)| self.manager.contains(id) && now.duration_since(**t) > ttl)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &victims {
+            self.manager.remove(id);
+            self.last_access.remove(id);
+        }
+        victims
+    }
+
+    /// Admission control: a workbook this large would be a memory hazard.
+    fn admit(&self, book: &Book) -> Result<()> {
+        if self.max_cells > 0 {
+            let cells = book.non_empty_count();
+            if cells > self.max_cells {
+                return Err(Error::from(format!(
+                    "workbook has {cells} non-empty cells, over this server's limit of {} — split the file or raise --max-cells",
+                    self.max_cells
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn new_id(&mut self) -> String {
@@ -85,37 +215,49 @@ impl Tools {
         } else {
             self.manager.insert(session)
         };
-        self.persist(&id);
+        self.install_history(&id);
+        self.persist(&id, 0, true);
+        self.touch(&id);
+        self.enforce_cap(&id);
         id
+    }
+
+    fn install_history(&mut self, id: &str) {
+        let Some(dir) = self.store_dir.clone() else {
+            return;
+        };
+        if let Ok(session) = self.manager.get_mut(id) {
+            session.history = Some(Box::new(JournalHistory { dir, id: id.to_string() }));
+        }
     }
 
     /// Get a session, rehydrating from the blob store when needed.
     pub fn session(&mut self, id: &str) -> Result<&mut Session> {
         if !self.manager.contains(id) {
-            if let Some(dir) = &self.data_dir {
-                let path = dir.join(format!("{id}.ic"));
-                if let Ok(bytes) = std::fs::read(&path) {
-                    let book = Book::from_bytes(&bytes)?;
-                    self.manager
-                        .insert_with_id(id, Session::new(book, Some(path.display().to_string())));
+            if let Some(store) = &self.store {
+                if let Some(session) = store.load_session(id)? {
+                    self.manager.insert_with_id(id, session);
+                    self.install_history(id);
+                    self.enforce_cap(id);
                 }
             }
         }
+        self.touch(id);
         self.manager.get_mut(id)
     }
 
-    /// Best-effort blob persistence; failures are logged, not fatal.
-    fn persist(&mut self, id: &str) {
-        let Some(dir) = self.data_dir.clone() else {
+    /// Best-effort persistence of head + meta + ephemera at `seq`;
+    /// failures are logged, not fatal. `reset_base` breaks the journal chain
+    /// (whole-book swaps) so the tail always replays cleanly.
+    fn persist(&mut self, id: &str, seq: u64, reset_base: bool) {
+        let Some(store) = &self.store else {
             return;
         };
         let Ok(session) = self.manager.get_mut(id) else {
             return;
         };
-        let bytes = session.book.to_bytes();
-        let path = dir.join(format!("{id}.ic"));
-        if let Err(e) = std::fs::write(&path, bytes) {
-            eprintln!("sheetd: failed to persist {id} to {}: {e}", path.display());
+        if let Err(e) = store.save_session(id, session, seq, reset_base) {
+            eprintln!("sheetd: failed to persist {id}: {e}");
         }
     }
 
@@ -141,6 +283,7 @@ impl Tools {
                 return Err(Error::from("pass either `path` or `new`, not both"))
             }
         };
+        self.admit(&book)?;
         let mut session = Session::new(book, origin.clone());
         let sketch = Self::sketch_text(&mut session);
         let id = self.insert(session);
@@ -153,6 +296,7 @@ impl Tools {
     fn open_gsheets(&mut self, spreadsheet_id: &str) -> Result<String> {
         let response = crate::gs::fetch_spreadsheet(spreadsheet_id)?;
         let imp = sheetkit::gsheets::import(spreadsheet_id, &response)?;
+        self.admit(&imp.book)?;
         let mut session = Session::new(imp.book, Some(format!("gsheets:{spreadsheet_id}")));
         session.gsheets = Some(imp.baseline);
         let sketch = Self::sketch_text(&mut session);
@@ -189,11 +333,13 @@ impl Tools {
                 }
             }
         };
+        self.admit(&book)?;
         Ok(self.insert(Session::new(book, None)))
     }
 
-    /// Replace an open workbook's content in place, keeping its id.
-    pub fn replace_bytes(&mut self, id: &str, format: &str, bytes: &[u8]) -> Result<()> {
+    /// Replace an open workbook's content in place, keeping its id. This is
+    /// a whole-book swap: replicas get a `resync` frame.
+    pub fn replace_bytes(&mut self, id: &str, format: &str, bytes: &[u8], principal: &str) -> Result<()> {
         let book = match format {
             "xlsx" => Book::from_xlsx_bytes(bytes, id)?,
             "csv" => Book::from_csv_str(
@@ -208,11 +354,30 @@ impl Tools {
                 )))
             }
         };
+        self.admit(&book)?;
         let session = self.session(id)?;
         session.book = book;
         session.invalidate();
         let _ = session.book.flush_diffs();
-        self.persist(id);
+        let seq = self.next_seq(id);
+        let event = ExecEvent {
+            workbook_id: id.to_string(),
+            principal: principal.to_string(),
+            cmd_id: None,
+            ok: true,
+            seq,
+            summary: format!("workbook file replaced ({format})"),
+            delta: vec![],
+            delta_total: 0,
+            diffs: vec![],
+            resync: true,
+            error: None,
+        };
+        self.persist(id, seq, true);
+        self.append_journal(&event);
+        if let Some(obs) = &self.observer {
+            obs.exec_finished(&event);
+        }
         Ok(())
     }
 
@@ -243,15 +408,24 @@ impl Tools {
             obs.exec_started(workbook_id, principal, script);
         }
         let session = self.manager.get_mut(workbook_id)?;
+        let ephemera_before = (session.checkpoint_names(), session.highlights.len());
         let out = cmd::exec(session, script, principal);
         let diffs = session.book.flush_diffs();
         let multi_sheet = session.book.sheet_count() > 1;
+        let ephemera_changed =
+            ephemera_before != (session.checkpoint_names(), session.highlights.len());
+
+        // A state change gets a sequence number and a journal entry;
+        // read-only execs get neither.
+        let changed = !out.delta.is_empty() || out.needs_resync;
+        let seq = if changed { self.next_seq(workbook_id) } else { 0 };
 
         let event = ExecEvent {
             workbook_id: workbook_id.to_string(),
             principal: principal.to_string(),
             cmd_id: cmd_id.map(String::from),
             ok: out.ok(),
+            seq,
             summary: out.results.join("\n"),
             delta: out
                 .delta
@@ -268,17 +442,33 @@ impl Tools {
                 .collect(),
             delta_total: out.delta.len(),
             diffs,
+            resync: out.needs_resync,
             error: out.failed.as_ref().map(|(line, _, err)| (*line, err.clone())),
         };
-        let changed = !out.delta.is_empty();
         let rendered = out.render(multi_sheet);
         if changed {
-            self.persist(workbook_id);
+            // Persist first: a resync transition resets the base and wipes
+            // the old journal tail, and this frame must land after that.
+            self.persist(workbook_id, seq, event.resync);
+            self.append_journal(&event);
+        } else if ephemera_changed {
+            self.persist(workbook_id, self.current_seq(workbook_id), false);
         }
         if let Some(obs) = &self.observer {
             obs.exec_finished(&event);
         }
         Ok(rendered)
+    }
+
+    /// Append an applied frame to the journal (exact bytes the channel sees).
+    fn append_journal(&self, event: &ExecEvent) {
+        let Some(store) = &self.store else {
+            return;
+        };
+        let frame = applied_frame(event);
+        if let Err(e) = store.append_frame(&event.workbook_id, &frame) {
+            eprintln!("sheetd: journal append failed for {}: {e}", event.workbook_id);
+        }
     }
 
     /// `sheet_view {workbook_id, target, mode?, budget_tokens?}`.
@@ -365,6 +555,9 @@ impl Tools {
         if let Some(b) = session.gsheets.as_mut() {
             sheetkit::gsheets::apply_push_to_baseline(b, &push.requests, &session.book);
         }
+        // Persist the fast-forwarded baseline so a later rehydration can push.
+        let seq = self.current_seq(workbook_id);
+        self.persist(workbook_id, seq, false);
         let mut out = format!(
             "pushed {} changed cell{} ({} request{}) to Google Sheets {sid}",
             push.changed_cells,
@@ -378,10 +571,24 @@ impl Tools {
         Ok(out)
     }
 
-    /// `sheet_close {workbook_id}`.
+    /// `sheet_close {workbook_id}`. The persisted blobs stay (rehydration);
+    /// `purge` removes them too.
     pub fn close(&mut self, workbook_id: &str) -> Result<String> {
         self.manager.close(workbook_id)?;
+        self.last_access.remove(workbook_id);
         Ok(format!("closed {workbook_id}"))
+    }
+
+    pub fn purge(&mut self, workbook_id: &str) -> Result<String> {
+        let existed = self.manager.remove(workbook_id) || self.store.as_ref().is_some_and(|s| s.exists(workbook_id));
+        self.last_access.remove(workbook_id);
+        if let Some(store) = &self.store {
+            store.delete(workbook_id, true)?;
+        }
+        if !existed {
+            return Err(Error::from(format!("no workbook {workbook_id:?}")));
+        }
+        Ok(format!("purged {workbook_id}"))
     }
 
     /// Dispatch an MCP tool call by name with JSON arguments.

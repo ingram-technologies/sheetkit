@@ -18,7 +18,6 @@
 //! `x-principal`).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use axum::body::Bytes;
@@ -28,7 +27,6 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json as AxumJson, Router};
-use base64::Engine as _;
 use serde_json::{json, Value as Json};
 use tokio::sync::broadcast;
 
@@ -44,47 +42,35 @@ pub struct ServeOptions {
     pub addr: String,
     pub data_dir: Option<std::path::PathBuf>,
     pub token: Option<String>,
+    /// Evict least-recently-used sessions past this count (0 = unlimited).
+    pub max_resident: usize,
+    /// Drop sessions idle longer than this many seconds (0 = never).
+    pub idle_secs: u64,
+    /// Garbage-collect blobs untouched for this many days (0 = keep forever).
+    pub gc_days: u64,
+    /// Reject imports with more non-empty cells than this (0 = unlimited).
+    pub max_cells: u64,
 }
 
 // ---- realtime channels ------------------------------------------------------
 
-struct Channel {
-    tx: broadcast::Sender<String>,
-    seq: Arc<AtomicU64>,
-}
-
 #[derive(Default)]
 struct Channels {
-    inner: StdMutex<HashMap<String, Channel>>,
+    inner: StdMutex<HashMap<String, broadcast::Sender<String>>>,
 }
 
 impl Channels {
-    fn entry(&self, id: &str) -> (broadcast::Sender<String>, Arc<AtomicU64>) {
+    fn entry(&self, id: &str) -> broadcast::Sender<String> {
         let mut map = self.inner.lock().unwrap();
-        let ch = map.entry(id.to_string()).or_insert_with(|| Channel {
-            tx: broadcast::channel(256).0,
-            seq: Arc::new(AtomicU64::new(0)),
-        });
-        (ch.tx.clone(), ch.seq.clone())
+        map.entry(id.to_string())
+            .or_insert_with(|| broadcast::channel(256).0)
+            .clone()
     }
 
-    /// Broadcast a sequenced message (mutations); returns the sequence number.
-    fn publish_seq(&self, id: &str, mut msg: Json) -> u64 {
-        let (tx, seq) = self.entry(id);
-        let n = seq.fetch_add(1, Ordering::SeqCst) + 1;
-        msg["seq"] = json!(n);
-        let _ = tx.send(msg.to_string());
-        n
-    }
-
-    /// Broadcast an unsequenced message (presence, status).
+    /// Broadcast a message. Sequenced frames carry their `seq` already
+    /// (assigned durably by the tools layer).
     fn publish(&self, id: &str, msg: Json) {
-        let (tx, _) = self.entry(id);
-        let _ = tx.send(msg.to_string());
-    }
-
-    fn current_seq(&self, id: &str) -> u64 {
-        self.entry(id).1.load(Ordering::SeqCst)
+        let _ = self.entry(id).send(msg.to_string());
     }
 }
 
@@ -106,25 +92,10 @@ impl ExecObserver for Broadcaster {
     }
 
     fn exec_finished(&self, e: &ExecEvent) {
-        if e.delta_total > 0 || e.ok {
-            let delta: Vec<Json> = e
-                .delta
-                .iter()
-                .map(|(addr, old, new)| json!([addr, old, new]))
-                .collect();
-            self.0.publish_seq(
-                &e.workbook_id,
-                json!({
-                    "type": "applied",
-                    "principal": e.principal,
-                    "cmd_id": e.cmd_id,
-                    "ok": e.ok,
-                    "summary": e.summary,
-                    "delta": delta,
-                    "delta_total": e.delta_total,
-                    "diffs_b64": base64::engine::general_purpose::STANDARD.encode(&e.diffs),
-                }),
-            );
+        // seq > 0 means the exec changed state and was journaled; the frame
+        // broadcast here is byte-identical to the journal line (replayable).
+        if e.seq > 0 {
+            self.0.publish(&e.workbook_id, crate::tools::applied_frame(e));
         }
         if let Some((line, error)) = &e.error {
             self.0.publish(
@@ -186,9 +157,13 @@ async fn async_run(opts: ServeOptions) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let channels = Arc::new(Channels::default());
-    let mut tools = Tools::new();
-    tools.data_dir = opts.data_dir.clone();
+    let mut tools = match &opts.data_dir {
+        Some(dir) => Tools::with_store(dir.clone()),
+        None => Tools::new(),
+    };
     tools.random_ids = true;
+    tools.max_cells = opts.max_cells;
+    tools.max_resident = opts.max_resident;
     tools.observer = Some(Box::new(Broadcaster(channels.clone())));
 
     let state = Arc::new(AppState {
@@ -211,7 +186,37 @@ async fn async_run(opts: ServeOptions) -> std::io::Result<()> {
         .route("/workbooks/{id}/highlights", get(get_highlights))
         .route("/workbooks/{id}/channel", get(channel_ws))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
-        .with_state(state);
+        .with_state(state.clone());
+
+    // Housekeeping: idle-session eviction and blob GC.
+    if opts.idle_secs > 0 || opts.gc_days > 0 {
+        let sweeper_state = state.clone();
+        let idle = std::time::Duration::from_secs(opts.idle_secs);
+        let gc_age = std::time::Duration::from_secs(opts.gc_days * 24 * 3600);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tick.tick().await;
+                let mut tools = sweeper_state.tools.lock().await;
+                if !idle.is_zero() {
+                    let evicted = tools.evict_idle(idle);
+                    if !evicted.is_empty() {
+                        eprintln!("sheetd: evicted idle sessions: {}", evicted.join(", "));
+                    }
+                }
+                if !gc_age.is_zero() {
+                    if let Some(store) = &tools.store {
+                        let resident = tools.manager.ids();
+                        let removed = store.gc(gc_age, &resident);
+                        if !removed.is_empty() {
+                            eprintln!("sheetd: gc removed: {}", removed.join(", "));
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(&opts.addr).await?;
     // Parsed by clients and tests; keep the format stable.
@@ -340,6 +345,7 @@ async fn get_workbook(
         return unauthorized();
     }
     let mut tools = state.tools.lock().await;
+    let seq = tools.current_seq(&id);
     match tools.session(&id) {
         Ok(session) => {
             let (regions, _) = session.regions().clone();
@@ -348,7 +354,7 @@ async fn get_workbook(
                 "workbook_id": id,
                 "sheets": session.book.sheet_names(),
                 "sketch": sketch,
-                "seq": state.channels.current_seq(&id),
+                "seq": seq,
             }))
             .into_response()
         }
@@ -366,8 +372,10 @@ async fn delete_workbook(
         return unauthorized();
     }
     let mut tools = state.tools.lock().await;
-    match tools.close(&id) {
-        Ok(_) => AxumJson(json!({ "closed": id })).into_response(),
+    let purge = query.get("purge").map(String::as_str) == Some("true");
+    let result = if purge { tools.purge(&id) } else { tools.close(&id) };
+    match result {
+        Ok(_) => AxumJson(json!({ "closed": id, "purged": purge })).into_response(),
         Err(e) => err_response(StatusCode::NOT_FOUND, &e.0),
     }
 }
@@ -459,8 +467,9 @@ async fn put_file(
             "csv".to_string()
         }
     });
+    let principal = state.principal(&headers, &query);
     let mut tools = state.tools.lock().await;
-    match tools.replace_bytes(&id, &format, &body) {
+    match tools.replace_bytes(&id, &format, &body, &principal) {
         Ok(()) => AxumJson(json!({ "workbook_id": id, "replaced": true })).into_response(),
         Err(e) => err_response(StatusCode::UNPROCESSABLE_ENTITY, &e.0),
     }
@@ -515,11 +524,13 @@ async fn channel_ws(
             .cloned()
             .unwrap_or_else(|| state.principal(&headers, &query))
     };
-    ws.on_upgrade(move |socket| channel_loop(socket, state, id, principal))
+    let last_seq: Option<u64> = query.get("last_seq").and_then(|v| v.parse().ok());
+    ws.on_upgrade(move |socket| channel_loop(socket, state, id, principal, last_seq))
 }
 
 async fn welcome_message(state: &Arc<AppState>, id: &str) -> Result<Json, String> {
     let mut tools = state.tools.lock().await;
+    let seq = tools.current_seq(id);
     let session = tools.session(id).map_err(|e| e.0)?;
     let highlights: Vec<Json> = session.highlights.iter().map(highlight_json).collect();
     Ok(json!({
@@ -527,13 +538,19 @@ async fn welcome_message(state: &Arc<AppState>, id: &str) -> Result<Json, String
         "v": CHANNEL_PROTOCOL,
         "workbook_id": id,
         "engine_version": ENGINE_VERSION,
-        "seq": state.channels.current_seq(id),
+        "seq": seq,
         "sheets": session.book.sheet_names(),
         "highlights": highlights,
     }))
 }
 
-async fn channel_loop(mut socket: WebSocket, state: Arc<AppState>, id: String, principal: String) {
+async fn channel_loop(
+    mut socket: WebSocket,
+    state: Arc<AppState>,
+    id: String,
+    principal: String,
+    last_seq: Option<u64>,
+) {
     // The workbook must exist (or rehydrate) before we subscribe.
     let welcome = match welcome_message(&state, &id).await {
         Ok(w) => w,
@@ -544,10 +561,24 @@ async fn channel_loop(mut socket: WebSocket, state: Arc<AppState>, id: String, p
             return;
         }
     };
-    let (tx, _) = state.channels.entry(&id);
+    let tx = state.channels.entry(&id);
     let mut rx = tx.subscribe();
     if socket.send(Message::Text(welcome.to_string().into())).await.is_err() {
         return;
+    }
+    // Reconnect replay: stream the journal frames the client missed. A
+    // `resync: true` frame in the replay tells it to refetch the file instead
+    // of applying diffs.
+    if let Some(after) = last_seq {
+        let frames = {
+            let tools = state.tools.lock().await;
+            tools.frames_after(&id, after)
+        };
+        for frame in frames {
+            if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                return;
+            }
+        }
     }
     state.channels.publish(
         &id,
