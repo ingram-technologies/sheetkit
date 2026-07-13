@@ -2,7 +2,7 @@
 //! per-column types/statistics. This is what lets an agent address data as
 //! `orders` instead of guessing `A1:F9871`, and what powers the aggregated view.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
 use crate::addr::{CellRef, Range};
 use crate::book::{format_number, Book, Value};
@@ -125,32 +125,17 @@ pub fn detect(book: &Book, sheet: u32) -> Vec<Region> {
         .cloned()
         .unwrap_or_default();
 
-    // Row occupancy map: row -> (min_col, max_col, count)
-    let mut occupancy: BTreeMap<i32, (i32, i32)> = BTreeMap::new();
+    // Collect non-empty cells once, then split into rectangular blocks with
+    // alternating guillotine cuts on row and column gaps (SheetCompressor's
+    // structural-anchor idea, simplified): two tables side by side separated
+    // by blank columns become two regions, not one wide bounding box.
+    let mut cells: Vec<(i32, i32)> = Vec::new();
     book.for_each_cell(sheet, |row, col, _cell| {
-        let e = occupancy.entry(row).or_insert((col, col));
-        e.0 = e.0.min(col);
-        e.1 = e.1.max(col);
+        cells.push((row, col));
     });
-
-    // Split occupied rows into blocks separated by >= ROW_GAP empty rows.
     let mut blocks: Vec<(i32, i32, i32, i32)> = Vec::new(); // (r1, r2, c1, c2)
-    let mut current: Option<(i32, i32, i32, i32)> = None;
-    for (&row, &(c1, c2)) in &occupancy {
-        match current {
-            Some((r1, r2, bc1, bc2)) if row - r2 <= ROW_GAP => {
-                current = Some((r1, row, bc1.min(c1), bc2.max(c2)));
-            }
-            Some(done) => {
-                blocks.push(done);
-                current = Some((row, row, c1, c2));
-            }
-            None => current = Some((row, row, c1, c2)),
-        }
-    }
-    if let Some(done) = current {
-        blocks.push(done);
-    }
+    split_block(&mut cells, &mut blocks, 0);
+    blocks.sort_unstable();
 
     // Excel table names by top-left cell.
     let mut table_names: HashMap<(i32, i32), String> = HashMap::new();
@@ -174,6 +159,56 @@ pub fn detect(book: &Book, sheet: u32) -> Vec<Region> {
         regions.push(analyze_region(book, sheet, &sheet_name, name, range));
     }
     regions
+}
+
+/// Recursively split a cell set into rectangles by cutting on runs of more
+/// than [`ROW_GAP`] empty rows or columns, until no cut applies. A cut along
+/// one axis can expose gaps along the other, so both axes are re-tried after
+/// every cut.
+fn split_block(cells: &mut [(i32, i32)], out: &mut Vec<(i32, i32, i32, i32)>, depth: u32) {
+    if cells.is_empty() {
+        return;
+    }
+    let (mut min_r, mut max_r, mut min_c, mut max_c) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+    for &(r, c) in cells.iter() {
+        min_r = min_r.min(r);
+        max_r = max_r.max(r);
+        min_c = min_c.min(c);
+        max_c = max_c.max(c);
+    }
+
+    // First value after a big enough gap along one axis, rows preferred.
+    fn find_cut(cells: &[(i32, i32)], by_rows: bool) -> Option<i32> {
+        let mut occupied: BTreeSet<i32> = BTreeSet::new();
+        for &(r, c) in cells {
+            occupied.insert(if by_rows { r } else { c });
+        }
+        let mut prev: Option<i32> = None;
+        for &k in &occupied {
+            if let Some(p) = prev {
+                if k - p > ROW_GAP {
+                    return Some(p);
+                }
+            }
+            prev = Some(k);
+        }
+        None
+    }
+
+    if depth < 32 {
+        for by_rows in [true, false] {
+            if let Some(cut) = find_cut(cells, by_rows) {
+                let key = |cell: &(i32, i32)| if by_rows { cell.0 } else { cell.1 };
+                cells.sort_unstable_by_key(key);
+                let split = cells.partition_point(|cell| key(cell) <= cut);
+                let (a, b) = cells.split_at_mut(split);
+                split_block(a, out, depth + 1);
+                split_block(b, out, depth + 1);
+                return;
+            }
+        }
+    }
+    out.push((min_r, max_r, min_c, max_c));
 }
 
 /// Detect regions across all sheets, returning a name → (sheet, range) map for
@@ -488,6 +523,46 @@ mod tests {
         let total = &regions[0].columns[3];
         assert!(total.fill.is_some());
         assert_eq!(total.fill.as_ref().unwrap().anchor_formula, "=B2*C2");
+    }
+
+    #[test]
+    fn splits_side_by_side_tables() {
+        let mut book = Book::new_empty("t").unwrap();
+        book.batch(|b| {
+            // Two tables separated by two blank columns (D:E), overlapping rows.
+            for row in 1..=5 {
+                b.set_input(0, row, 1, &format!("a{row}"))?;
+                b.set_input(0, row, 2, &row.to_string())?;
+                b.set_input(0, row, 3, &row.to_string())?;
+            }
+            for row in 2..=8 {
+                b.set_input(0, row, 6, &format!("x{row}"))?; // F
+                b.set_input(0, row, 7, &row.to_string())?; // G
+            }
+            Ok(())
+        })
+        .unwrap();
+        let regions = detect(&book, 0);
+        assert_eq!(regions.len(), 2, "{:?}", regions.iter().map(|r| r.range.a1()).collect::<Vec<_>>());
+        assert_eq!(regions[0].range.a1(), "A1:C5");
+        assert_eq!(regions[1].range.a1(), "F2:G8");
+    }
+
+    #[test]
+    fn splits_stacked_and_side_by_side() {
+        let mut book = Book::new_empty("t").unwrap();
+        book.batch(|b| {
+            b.set_input(0, 1, 1, "top")?; // A1 alone
+            for row in 5..=8 {
+                b.set_input(0, row, 1, &row.to_string())?; // A5:A8
+                b.set_input(0, row, 5, &row.to_string())?; // E5:E8
+            }
+            Ok(())
+        })
+        .unwrap();
+        let regions = detect(&book, 0);
+        let ranges: Vec<String> = regions.iter().map(|r| r.range.a1()).collect();
+        assert_eq!(ranges, vec!["A1", "A5:A8", "E5:E8"], "{ranges:?}");
     }
 
     #[test]

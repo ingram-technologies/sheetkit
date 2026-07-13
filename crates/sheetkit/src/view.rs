@@ -50,7 +50,19 @@ pub fn render_view(book: &Book, target: &Resolved, regions: &[Region], opts: Vie
         } else if region.is_some() {
             Mode::Aggregated
         } else {
-            Mode::Dense // dense with head/tail elision
+            // Large and no region structure: sparse ranges read better as an
+            // inverted index, dense ones as a truncated grid.
+            let mut non_empty = 0i64;
+            book.for_each_cell(target.sheet_index, |row, col, _| {
+                if target.range.contains(row, col) {
+                    non_empty += 1;
+                }
+            });
+            if non_empty * 100 < target.range.cell_count() * 15 {
+                Mode::Sparse
+            } else {
+                Mode::Dense
+            }
         }
     });
     match mode {
@@ -103,8 +115,17 @@ pub fn render_dense(
         header.push_str(&format!(" [region: {}]", r.name));
     }
 
+    // Very wide ranges: cap the columns rendered and say so.
+    const MAX_DENSE_COLS: i32 = 30;
+    let mut col_end = range.end.col;
+    let mut elided_cols = 0;
+    if range.width() > MAX_DENSE_COLS {
+        col_end = range.start.col + MAX_DENSE_COLS - 1;
+        elided_cols = range.end.col - col_end;
+    }
+
     // Column header line: letters, plus header names when a region knows them.
-    let cols: Vec<i32> = (range.start.col..=range.end.col).collect();
+    let cols: Vec<i32> = (range.start.col..=col_end).collect();
     let mut col_titles: Vec<String> = Vec::with_capacity(cols.len());
     for &col in &cols {
         let letter = number_to_column(col).unwrap_or_default();
@@ -208,10 +229,22 @@ pub fn render_dense(
                 display_sheet(&target.sheet_name),
                 number_to_column(range.start.col).unwrap_or_default(),
                 from,
-                number_to_column(range.end.col).unwrap_or_default(),
+                number_to_column(col_end).unwrap_or_default(),
                 to,
             ));
         }
+    }
+    if elided_cols > 0 {
+        out.push_str(&format!(
+            "… {elided_cols} columns ({}–{}) elided; `view {}!{}{}:{}{}` to see them\n",
+            number_to_column(col_end + 1).unwrap_or_default(),
+            number_to_column(range.end.col).unwrap_or_default(),
+            display_sheet(&target.sheet_name),
+            number_to_column(col_end + 1).unwrap_or_default(),
+            range.start.row,
+            number_to_column(range.end.col).unwrap_or_default(),
+            range.end.row,
+        ));
     }
     out.trim_end().to_string()
 }
@@ -265,12 +298,16 @@ fn truncate(s: &str, max: usize) -> String {
     format!("{cut}…")
 }
 
+/// Sparse view with an inverted index (the SheetCompressor trick): identical
+/// cell texts group into one line, cell lists compress into vertical runs.
+///
+/// ```text
+/// Sheet1!A1:Z100 (sparse: 37 non-empty of 2600)
+/// "pending" — B2:B9, D4, F7:F9
+/// 0 — C2:C40
+/// =SUM(C2:C40) ⇒ 0 — C42
+/// ```
 pub fn render_sparse(book: &Book, target: &Resolved, budget_chars: usize) -> String {
-    let mut out = format!("{} (sparse)\n", target.qualified());
-    let mut used = out.len();
-    let mut shown = 0usize;
-    let mut total = 0usize;
-    let mut truncated = false;
     let mut entries: Vec<(i32, i32)> = Vec::new();
     book.for_each_cell(target.sheet_index, |row, col, _| {
         if target.range.contains(row, col) {
@@ -278,31 +315,84 @@ pub fn render_sparse(book: &Book, target: &Resolved, budget_chars: usize) -> Str
         }
     });
     entries.sort_unstable();
+
+    // Group identical texts. Keep first-appearance order as tiebreaker.
+    let mut groups: Vec<(String, Vec<(i32, i32)>)> = Vec::new();
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (row, col) in entries {
-        total += 1;
-        if truncated {
-            continue;
-        }
         let text = cell_text(book, target.sheet_index, row, col);
         if text.is_empty() {
             continue;
         }
-        let line = format!("{}: {}\n", CellRef { row, col }.a1(), text);
+        match index.get(&text) {
+            Some(&i) => groups[i].1.push((row, col)),
+            None => {
+                index.insert(text.clone(), groups.len());
+                groups.push((text, vec![(row, col)]));
+            }
+        }
+    }
+    let total_cells: usize = groups.iter().map(|(_, v)| v.len()).sum();
+    let mut out = format!(
+        "{} (sparse: {total_cells} non-empty of {})\n",
+        target.qualified(),
+        target.range.cell_count()
+    );
+    if total_cells == 0 {
+        out.push_str("(no non-empty cells)");
+        return out;
+    }
+    // Most repeated first — those compress best and describe the sheet fastest.
+    groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    let mut used = out.len();
+    let mut shown_groups = 0usize;
+    let mut shown_cells = 0usize;
+    let mut truncated = false;
+    for (text, cells) in &groups {
+        let line = format!("{text} — {}\n", compress_cells(cells));
         if used + line.len() > budget_chars {
             truncated = true;
-            continue;
+            break;
         }
         used += line.len();
         out.push_str(&line);
-        shown += 1;
+        shown_groups += 1;
+        shown_cells += cells.len();
     }
     if truncated {
-        out.push_str(&format!("… {} more cells elided for budget\n", total - shown));
-    }
-    if shown == 0 && !truncated {
-        out.push_str("(no non-empty cells)\n");
+        out.push_str(&format!(
+            "… {} more distinct values ({} cells) elided for budget; raise budget or narrow the range\n",
+            groups.len() - shown_groups,
+            total_cells - shown_cells
+        ));
     }
     out.trim_end().to_string()
+}
+
+/// Compress a cell list into runs: consecutive rows in one column become
+/// `B2:B9`; everything else stays a single reference.
+fn compress_cells(cells: &[(i32, i32)]) -> String {
+    let mut sorted: Vec<(i32, i32)> = cells.to_vec(); // (row, col)
+    sorted.sort_unstable_by_key(|&(row, col)| (col, row));
+    let mut parts: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let (start_row, col) = sorted[i];
+        let mut end_row = start_row;
+        while i + 1 < sorted.len() && sorted[i + 1].1 == col && sorted[i + 1].0 == end_row + 1 {
+            end_row = sorted[i + 1].0;
+            i += 1;
+        }
+        let a = CellRef { row: start_row, col }.a1();
+        if end_row > start_row {
+            parts.push(format!("{a}:{}", CellRef { row: end_row, col }.a1()));
+        } else {
+            parts.push(a);
+        }
+        i += 1;
+    }
+    parts.join(", ")
 }
 
 /// The aggregated, per-column view of a region.
@@ -513,7 +603,68 @@ mod tests {
             &regions,
             ViewOptions { mode: Some(Mode::Sparse), budget_tokens: 500 },
         );
-        assert!(v.contains("A1: 9"), "{v}");
-        assert!(v.contains("C50: \"hello\""), "{v}");
+        assert!(v.contains("9 — A1"), "{v}");
+        assert!(v.contains("\"hello\" — C50"), "{v}");
+    }
+
+    #[test]
+    fn sparse_inverted_index_compresses_runs() {
+        let mut book = Book::new_empty("s").unwrap();
+        book.batch(|b| {
+            for row in 2..=9 {
+                b.set_input(0, row, 2, "pending")?; // B2:B9
+            }
+            b.set_input(0, 4, 4, "pending")?; // D4
+            b.set_input(0, 40, 9, "done")?; // I40
+            Ok(())
+        })
+        .unwrap();
+        let (regions, _) = detect_all(&book);
+        let v = render_view(
+            &book,
+            &resolved(&book, "A1:Z100"),
+            &regions,
+            ViewOptions { mode: Some(Mode::Sparse), budget_tokens: 500 },
+        );
+        assert!(v.contains("\"pending\" — B2:B9, D4"), "{v}");
+        assert!(v.contains("\"done\" — I40"), "{v}");
+        assert!(v.contains("10 non-empty of 2600"), "{v}");
+    }
+
+    #[test]
+    fn auto_mode_picks_sparse_for_low_density() {
+        let mut book = Book::new_empty("s").unwrap();
+        book.set_input(0, 1, 1, "x").unwrap();
+        book.set_input(0, 900, 20, "y").unwrap();
+        let (regions, _) = detect_all(&book);
+        let v = render_view(
+            &book,
+            &resolved(&book, "A1:Z1000"),
+            &regions,
+            ViewOptions::default(),
+        );
+        assert!(v.contains("(sparse:"), "{v}");
+    }
+
+    #[test]
+    fn dense_elides_columns_beyond_thirty() {
+        let mut book = Book::new_empty("wide").unwrap();
+        book.batch(|b| {
+            for col in 1..=40 {
+                b.set_input(0, 1, col, &format!("h{col}"))?;
+                b.set_input(0, 2, col, &col.to_string())?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let (regions, _) = detect_all(&book);
+        let v = render_view(
+            &book,
+            &resolved(&book, "A1:AN2"),
+            &regions,
+            ViewOptions { mode: Some(Mode::Dense), budget_tokens: 4000 },
+        );
+        assert!(v.contains("10 columns (AE–AN) elided"), "{v}");
+        assert!(v.contains("view Sheet1!AE1:AN2"), "{v}");
     }
 }
