@@ -1,0 +1,6 @@
+{
+  "name": "sheets",
+  "description": "Work in spreadsheets like you can see them: compressed structure sketches, a range-verb command language, and a recalc delta after every edit. Requires the sheetd binary on PATH (cargo install --path crates/sheetd).",
+  "version": "0.1.0",
+  "mcpServers": "./.mcp.json"
+}

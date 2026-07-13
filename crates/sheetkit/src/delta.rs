@@ -136,7 +136,11 @@ pub fn render(delta: &Delta, multi_sheet: bool, max_lines: usize) -> String {
         } else {
             c.addr()
         };
-        parts.push(format!("{addr} {} ⇒ {}", c.old.display(), c.new.display()));
+        if c.old.is_empty() {
+            parts.push(format!("{addr} ⇒ {}", c.new.display()));
+        } else {
+            parts.push(format!("{addr} {} ⇒ {}", c.old.display(), c.new.display()));
+        }
     }
     let mut out = format!(
         "recalc: {} cell{} changed\n  {}",

@@ -98,7 +98,7 @@ pub fn render_dense(
 ) -> String {
     let sheet = target.sheet_index;
     let range = target.range;
-    let mut header = format!("{}", target.qualified());
+    let mut header = target.qualified();
     if let Some(r) = region {
         header.push_str(&format!(" [region: {}]", r.name));
     }

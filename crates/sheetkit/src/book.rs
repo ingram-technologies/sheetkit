@@ -60,13 +60,18 @@ impl Value {
     }
 }
 
-/// Render a number the way a human would type it (no trailing zeros noise).
+/// Render a number the way a human would type it: integers bare, and float
+/// representation dust (12877.689999999999) rounded away.
 pub fn format_number(n: f64) -> String {
+    let n = if n.is_finite() && n.abs() < 1e12 {
+        (n * 1e10).round() / 1e10
+    } else {
+        n
+    };
     if n == n.trunc() && n.abs() < 1e15 {
         format!("{}", n as i64)
     } else {
-        let s = format!("{n}");
-        s
+        format!("{n}")
     }
 }
 

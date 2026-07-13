@@ -9,6 +9,9 @@ use crate::book::{Book, Resolved};
 use crate::regions::{detect_all, Region};
 use crate::{Error, Result};
 
+/// Region list plus the name → (sheet, range) index used for resolution.
+pub type RegionIndex = (Vec<Region>, HashMap<String, (u32, Range)>);
+
 /// A range flagged for discussion, by the agent or a human.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Highlight {
@@ -31,7 +34,7 @@ pub struct Session {
     pub highlights: Vec<Highlight>,
     next_highlight_id: u32,
     checkpoints: Vec<(String, Vec<u8>)>,
-    regions_cache: Option<(Vec<Region>, HashMap<String, (u32, Range)>)>,
+    regions_cache: Option<RegionIndex>,
 }
 
 impl Session {
@@ -52,7 +55,7 @@ impl Session {
         self.regions_cache = None;
     }
 
-    pub fn regions(&mut self) -> &(Vec<Region>, HashMap<String, (u32, Range)>) {
+    pub fn regions(&mut self) -> &RegionIndex {
         if self.regions_cache.is_none() {
             self.regions_cache = Some(detect_all(&self.book));
         }
