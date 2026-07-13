@@ -4,6 +4,7 @@
 //! - `sheetd serve`          HTTP: streamable MCP + REST API + realtime channel
 //! - `sheetd repl [file]`    interactive DSL session
 
+mod gs;
 mod mcp;
 mod repl;
 mod rpc;

@@ -32,6 +32,9 @@ pub struct Session {
     /// Where the workbook came from, if it came from a file.
     pub origin: Option<String>,
     pub highlights: Vec<Highlight>,
+    /// Present when the workbook was pulled from Google Sheets; holds the
+    /// content baseline that `save` diffs against to push.
+    pub gsheets: Option<crate::gsheets::Baseline>,
     next_highlight_id: u32,
     checkpoints: Vec<(String, Vec<u8>)>,
     regions_cache: Option<RegionIndex>,
@@ -44,6 +47,7 @@ impl Session {
             current_sheet: 0,
             origin,
             highlights: Vec::new(),
+            gsheets: None,
             next_highlight_id: 1,
             checkpoints: Vec::new(),
             regions_cache: None,

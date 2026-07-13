@@ -291,6 +291,14 @@ impl Book {
         Ok(self.um.get_cell_content(sheet, row, col)?)
     }
 
+    /// Apply a number format to a range (e.g. `yyyy-mm-dd` to make serial
+    /// numbers display as dates).
+    pub fn set_num_fmt(&mut self, sheet: u32, range: Range, fmt: &str) -> Result<()> {
+        self.um
+            .update_range_style(&to_area(sheet, range), "num_fmt", fmt)?;
+        Ok(())
+    }
+
     /// The formula at a cell (with `=`), if any.
     pub fn formula(&self, sheet: u32, row: i32, col: i32) -> Result<Option<String>> {
         Ok(self.um.get_model().get_cell_formula(sheet, row, col)?)

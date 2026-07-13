@@ -12,8 +12,8 @@ serde_json.workspace = true
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
 base64 = "0.22"
+ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
 tempfile = "3"
-ureq = { version = "2", features = ["json"] }
 tungstenite = "0.24"

@@ -150,11 +150,14 @@ with the result opened in the stock IronCalc web app:
 ## Status
 
 Early but real: the five MCP tools (stdio and streamable HTTP), the full
-command language, the REST API, and the realtime channel all work end-to-end
-— unit tests plus spawn-the-binary protocol tests for both transports, and
-compression acceptance tests (a 50,000-row workbook sketches in under 3k
-tokens with zero silent truncation). Not yet here: Google Sheets pull/push,
-channel replay buffers (clients resync on gaps), per-workbook access control.
+command language, the REST API, the realtime channel, and Google Sheets
+pull/push ([docs/gsheets.md](docs/gsheets.md) — two API calls per session:
+one `get` at open, one `batchUpdate` diff at save) all work end-to-end —
+unit tests plus spawn-the-binary protocol tests for both transports and a
+mock-API adapter test, and compression acceptance tests (a 50,000-row
+workbook sketches in under 3k tokens with zero silent truncation). Not yet
+here: channel replay buffers (clients resync on gaps), per-workbook access
+control.
 
 ## License
 

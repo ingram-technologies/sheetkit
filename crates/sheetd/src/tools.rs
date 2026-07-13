@@ -73,7 +73,11 @@ impl Tools {
         format!("wb-{:08x}", (h.finish() & 0xffff_ffff) as u32)
     }
 
-    fn insert(&mut self, session: Session) -> String {
+    fn insert(&mut self, mut session: Session) -> String {
+        // Drop diffs accumulated while building the book (csv/gsheets import):
+        // replicas bootstrap from the persisted state, so replaying import
+        // diffs on top would double-apply.
+        let _ = session.book.flush_diffs();
         let id = if self.random_ids {
             let id = self.new_id();
             self.manager.insert_with_id(&id, session);
@@ -122,8 +126,14 @@ impl Tools {
 
     // ---- the five tools -----------------------------------------------------
 
-    /// `sheet_open {path | new}` → workbook id + structure sketch.
+    /// `sheet_open {path | new}` → workbook id + structure sketch. `path`
+    /// also accepts a Google Sheets URL or `gsheets:<id>` ref (pull).
     pub fn open(&mut self, path: Option<&str>, new: Option<&str>) -> Result<String> {
+        if let (Some(p), None) = (path, new) {
+            if let Some(sid) = sheetkit::gsheets::parse_spreadsheet_id(p) {
+                return self.open_gsheets(&sid);
+            }
+        }
         let (book, origin) = match (path, new) {
             (Some(p), None) => (Book::open(p)?, Some(p.to_string())),
             (None, name) => (Book::new_empty(name.unwrap_or("workbook"))?, None),
@@ -136,6 +146,26 @@ impl Tools {
         let id = self.insert(session);
         let origin_note = origin.map(|p| format!(" from {p}")).unwrap_or_default();
         Ok(format!("opened {id}{origin_note}\n\n{sketch}"))
+    }
+
+    /// Pull a Google spreadsheet: one `spreadsheets.get`, then everything is
+    /// local until `sheet_save` pushes the content diff back.
+    fn open_gsheets(&mut self, spreadsheet_id: &str) -> Result<String> {
+        let response = crate::gs::fetch_spreadsheet(spreadsheet_id)?;
+        let imp = sheetkit::gsheets::import(spreadsheet_id, &response)?;
+        let mut session = Session::new(imp.book, Some(format!("gsheets:{spreadsheet_id}")));
+        session.gsheets = Some(imp.baseline);
+        let sketch = Self::sketch_text(&mut session);
+        let id = self.insert(session);
+        let mut out = format!(
+            "opened {id} from Google Sheets {spreadsheet_id} (local copy; `sheet_save` pushes changes back)\n"
+        );
+        for w in &imp.warnings {
+            out.push_str(&format!("⚠ {w}\n"));
+        }
+        out.push('\n');
+        out.push_str(&sketch);
+        Ok(out)
     }
 
     /// Open from raw bytes (REST door). Format: `xlsx`, `csv`, or `ic`;
@@ -181,6 +211,7 @@ impl Tools {
         let session = self.session(id)?;
         session.book = book;
         session.invalidate();
+        let _ = session.book.flush_diffs();
         self.persist(id);
         Ok(())
     }
@@ -278,9 +309,16 @@ impl Tools {
     }
 
     /// `sheet_save {workbook_id, path?, overwrite?}`. With no path, saves back
-    /// to where the workbook was opened from.
+    /// to where the workbook was opened from — a file write, or a Google
+    /// Sheets push when the workbook was pulled from one.
     pub fn save(&mut self, workbook_id: &str, path: Option<&str>, overwrite: bool) -> Result<String> {
         let session = self.session(workbook_id)?;
+        let origin_is_gsheets = path.is_none()
+            && session.origin.as_deref().is_some_and(|o| o.starts_with("gsheets:"));
+        if origin_is_gsheets {
+            return self.save_gsheets(workbook_id);
+        }
+        let session = self.manager.get_mut(workbook_id)?;
         let (target, implicit) = match (path, &session.origin) {
             (Some(p), _) => (p.to_string(), false),
             (None, Some(o)) => (o.clone(), true),
@@ -293,6 +331,51 @@ impl Tools {
         // Saving back to the origin is a plain "save" — overwrite implied.
         session.book.save(&target, overwrite || implicit)?;
         Ok(format!("saved {workbook_id} to {target}"))
+    }
+
+    /// Push the content diff back to the origin spreadsheet: a structural
+    /// drift tripwire (light properties fetch), then one `batchUpdate`.
+    fn save_gsheets(&mut self, workbook_id: &str) -> Result<String> {
+        let session = self.manager.get_mut(workbook_id)?;
+        let sid = session
+            .origin
+            .as_deref()
+            .and_then(|o| o.strip_prefix("gsheets:"))
+            .map(String::from)
+            .ok_or_else(|| Error::from("not a Google Sheets workbook"))?;
+        let Some(baseline) = session.gsheets.clone() else {
+            return Err(Error::from(
+                "this workbook lost its push baseline (e.g. it was rehydrated from the blob store); re-open the spreadsheet URL to pull a fresh baseline, then re-apply your changes",
+            ));
+        };
+        let push = sheetkit::gsheets::push_requests(&session.book, &baseline)?;
+        if push.requests.is_empty() {
+            return Ok(format!("no changes to push to Google Sheets {sid}"));
+        }
+        let mut warnings = push.warnings.clone();
+        match crate::gs::fetch_sheet_properties(&sid) {
+            Ok(props) => {
+                if let Some(w) = sheetkit::gsheets::structural_drift(&baseline, &props) {
+                    warnings.push(w);
+                }
+            }
+            Err(e) => warnings.push(format!("could not check for remote drift: {e}")),
+        }
+        crate::gs::push_batch(&sid, &push.requests)?;
+        if let Some(b) = session.gsheets.as_mut() {
+            sheetkit::gsheets::apply_push_to_baseline(b, &push.requests, &session.book);
+        }
+        let mut out = format!(
+            "pushed {} changed cell{} ({} request{}) to Google Sheets {sid}",
+            push.changed_cells,
+            if push.changed_cells == 1 { "" } else { "s" },
+            push.requests.len(),
+            if push.requests.len() == 1 { "" } else { "s" },
+        );
+        for w in warnings {
+            out.push_str(&format!("\n⚠ {w}"));
+        }
+        Ok(out)
     }
 
     /// `sheet_close {workbook_id}`.
@@ -337,7 +420,7 @@ pub fn tool_definitions() -> Json {
     json!([
         {
             "name": "sheet_open",
-            "description": "Open a spreadsheet (xlsx, csv, or ic) or create a new one. Returns a workbook_id plus a structure sketch: every sheet, detected table regions with per-column types/ranges/fill formulas, and defined names. Read the sketch instead of dumping cells — it is usually all you need to start working.",
+            "description": "Open a spreadsheet (xlsx, csv, or ic file — or a Google Sheets URL / gsheets:<id>, pulled once and worked on locally; requires GSHEETS_TOKEN) or create a new one. Returns a workbook_id plus a structure sketch: every sheet, detected table regions with per-column types/ranges/fill formulas, and defined names. Read the sketch instead of dumping cells — it is usually all you need to start working.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -374,7 +457,7 @@ pub fn tool_definitions() -> Json {
         },
         {
             "name": "sheet_save",
-            "description": "Save the workbook. Without a path, saves back to the file it was opened from. Format follows the extension: .xlsx, .csv, .ic. Saving to a NEW existing path requires overwrite=true.",
+            "description": "Save the workbook. Without a path, saves back to where it was opened from: a file write, or — for workbooks opened from a Google Sheets URL — a single batched push of every changed cell (last-write-wins; structural remote drift is detected and warned about). With a path, format follows the extension: .xlsx, .csv, .ic. Saving to a NEW existing path requires overwrite=true.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

@@ -18,6 +18,7 @@ pub mod cmd;
 pub mod delta;
 pub mod displace;
 pub mod fills;
+pub mod gsheets;
 pub mod regions;
 pub mod session;
 pub mod view;
