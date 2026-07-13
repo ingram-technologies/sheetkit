@@ -15,6 +15,7 @@ grows the capability.
 | Table (ListObject) CRUD absent (xlsx round-trips tables, no create/edit API) | Region *detection* is ours anyway; Excel table definitions seed region names | Table CRUD + diff variants |
 | Constructor lifetimes tie to `&str` params | Create with a static placeholder name, `set_name` after | Take `String`/`impl Into<String>` |
 | Merged cells preserved but not editable | Read/flag only | Merge/unmerge API |
+| Undo history is in-memory only; diff blobs apply forward only (`Diff` is crate-private) | Exec journal: state N−1 rebuilt by replaying the journal tail onto a base blob; whole-book swaps emit `resync` frames | Serializable history, or a public reverse-apply for diff blobs — would collapse replay-undo into one call and let restore transitions ride the diff queue |
 
 Version pinning is not pedantry: `.ic` snapshots and the diff queue blobs are
 bitcode-encoded internal structures, explicitly version-locked. Anything that

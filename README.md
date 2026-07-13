@@ -81,11 +81,23 @@ sheetd serve --addr 127.0.0.1:7373 --data-dir ./books --token $SHEETD_TOKEN
   same-version replica (e.g. the wasm build) can mirror the grid live. See
   [docs/channel-protocol.md](docs/channel-protocol.md).
 
-Workbooks persist as `.ic` blobs under `--data-dir` after every mutation and
-rehydrate on demand — ids survive restarts. Auth is a static bearer token;
-callers are labeled by a configurable principal header
-(`SHEETD_PRINCIPAL_HEADER`, default `x-principal`), which is how a UI knows
-*who* — human or agent — made each change.
+The blob store under `--data-dir` is the source of truth; resident sessions
+are only a cache over it. Every mutation persists the workbook head plus an
+**exec journal** (the same `applied` frames the channel broadcasts), which
+buys three things at once: `undo` that survives eviction and restarts
+(state N−1 = journal base + diff replay), channel replay for reconnecting
+clients (`?last_seq=N`), and an audit trail of who changed what. Sequence
+numbers are durable.
+
+Because nothing lives only in memory, the server is safe to run multi-tenant:
+`--max-resident` caps resident sessions (LRU eviction), `--idle-secs` sweeps
+idle ones, `--max-cells` rejects imports too big to evaluate safely, and
+`--gc-days` garbage-collects blobs nobody has touched. `DELETE
+/workbooks/{id}?purge=true` removes a workbook's files outright.
+
+Auth is a static bearer token; callers are labeled by a configurable
+principal header (`SHEETD_PRINCIPAL_HEADER`, default `x-principal`), which is
+how a UI knows *who* — human or agent — made each change.
 
 ## The command language
 
@@ -156,8 +168,9 @@ one `get` at open, one `batchUpdate` diff at save) all work end-to-end —
 unit tests plus spawn-the-binary protocol tests for both transports and a
 mock-API adapter test, and compression acceptance tests (a 50,000-row
 workbook sketches in under 3k tokens with zero silent truncation). Not yet
-here: channel replay buffers (clients resync on gaps), per-workbook access
-control.
+here: per-workbook access control, multi-replica coordination (the store is
+designed for conditional writes but the server currently assumes a single
+writer process).
 
 ## License
 

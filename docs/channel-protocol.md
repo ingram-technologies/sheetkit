@@ -9,17 +9,28 @@ channel plus one file fetch.
 
 The server holds the one authoritative engine session per workbook; every
 mutation from every door (stdio MCP, HTTP MCP, REST, this channel) is
-serialized through it and fans out here with a per-workbook monotonic `seq`.
-Clients are replicas: apply `applied` frames in `seq` order. On a `gap` frame
-(slow consumer) or a `seq` discontinuity, resync: `GET /workbooks/{id}/file?format=ic`,
-reload, resubscribe.
+serialized through it and fans out here with a per-workbook monotonic `seq`
+that is durable (journaled with the workbook, survives restarts).
+Clients are replicas: apply `applied` frames in `seq` order.
+
+**Reconnect replay:** connect with `?last_seq=N` and the server streams the
+`applied` frames you missed (straight from the exec journal, byte-identical
+to the original broadcast) right after `welcome`. On a `gap` frame (slow
+consumer) or a `seq` discontinuity, resync instead:
+`GET /workbooks/{id}/file?format=ic`, reload, resubscribe with the new seq.
+
+**`resync: true` frames:** some transitions cannot be expressed as engine
+diffs — checkpoint restore, journal-backed undo, whole-file replace. Their
+`applied` frame carries `resync: true` and an empty `diffs_b64`; on receiving
+one (live or in replay), refetch the file instead of applying diffs. The
+`delta` field is still present for UI change-pulse rendering.
 
 ## Server → client
 
 | type | fields | meaning |
 |---|---|---|
 | `welcome` | `v`, `workbook_id`, `engine_version`, `seq`, `sheets[]`, `highlights[]` | sent on connect and on `hello` |
-| `applied` | `seq`, `principal`, `cmd_id?`, `ok`, `summary`, `delta[[addr,old,new],…]` (capped), `delta_total`, `diffs_b64` | a script ran and changed state |
+| `applied` | `seq`, `principal`, `cmd_id?`, `ok`, `summary`, `delta[[addr,old,new],…]` (capped), `delta_total`, `diffs_b64`, `resync` | a script ran and changed state (read-only scripts fan nothing out) |
 | `rejected` | `principal`, `cmd_id?`, `line`, `error` | a script line failed (earlier lines may still have applied — watch for a paired `applied`) |
 | `agent.status` | `principal`, `phase: executing\|idle`, `script_line?` | exec lifecycle, drives "the agent is working" UI |
 | `presence` | `principal`, `joined?`/`left?`/`selection?`/`viewport?`/`editing_cell?` | fan-out of peer presence |
