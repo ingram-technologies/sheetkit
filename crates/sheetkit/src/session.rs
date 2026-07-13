@@ -12,6 +12,15 @@ use crate::{Error, Result};
 /// Region list plus the name → (sheet, range) index used for resolution.
 pub type RegionIndex = (Vec<Region>, HashMap<String, (u32, Range)>);
 
+/// Reconstructs earlier workbook states for `undo` when the in-memory engine
+/// history is gone (a session that was evicted and rehydrated). Server mode
+/// backs this with the exec journal: state N-1 = base blob + journal diffs.
+pub trait HistoryProvider: Send {
+    /// The workbook as it was `steps` execs before the current state, or
+    /// `None` when history does not reach back that far (compacted away).
+    fn state_back(&self, steps: u32) -> Result<Option<Book>>;
+}
+
 /// A range flagged for discussion, by the agent or a human.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Highlight {
@@ -35,6 +44,13 @@ pub struct Session {
     /// Present when the workbook was pulled from Google Sheets; holds the
     /// content baseline that `save` diffs against to push.
     pub gsheets: Option<crate::gsheets::Baseline>,
+    /// Fallback for `undo` when the engine history is empty (rehydrated
+    /// sessions); installed by the server layer, absent in stdio mode.
+    pub history: Option<Box<dyn HistoryProvider>>,
+    /// Set when the book was swapped wholesale (checkpoint restore, journal
+    /// undo): the engine diff queue cannot represent that transition, so
+    /// replicas must resync from the persisted state instead of applying diffs.
+    pub needs_resync: bool,
     next_highlight_id: u32,
     checkpoints: Vec<(String, Vec<u8>)>,
     regions_cache: Option<RegionIndex>,
@@ -48,6 +64,8 @@ impl Session {
             origin,
             highlights: Vec::new(),
             gsheets: None,
+            history: None,
+            needs_resync: false,
             next_highlight_id: 1,
             checkpoints: Vec::new(),
             regions_cache: None,
@@ -101,12 +119,33 @@ impl Session {
                 ))
             })?;
         self.book = Book::from_bytes(&bytes)?;
+        // The diff queue cannot express "the whole book was replaced".
+        self.needs_resync = true;
         self.invalidate();
         Ok(())
     }
 
     pub fn checkpoint_names(&self) -> Vec<String> {
         self.checkpoints.iter().map(|(n, _)| n.clone()).collect()
+    }
+
+    /// Raw checkpoint blobs, for the server layer to persist.
+    pub fn checkpoints_raw(&self) -> &[(String, Vec<u8>)] {
+        &self.checkpoints
+    }
+
+    /// Replace the checkpoint set (rehydration).
+    pub fn set_checkpoints(&mut self, checkpoints: Vec<(String, Vec<u8>)>) {
+        self.checkpoints = checkpoints;
+    }
+
+    /// Highlight id counter, for the server layer to persist/restore.
+    pub fn next_highlight_id(&self) -> u32 {
+        self.next_highlight_id
+    }
+
+    pub fn set_next_highlight_id(&mut self, id: u32) {
+        self.next_highlight_id = id.max(1);
     }
 
     // ---- highlights ----------------------------------------------------------

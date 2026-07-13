@@ -43,6 +43,9 @@ pub struct ExecOutput {
     pub warnings: Vec<String>,
     /// `(line number, command, error)` when a line failed; later lines did not run.
     pub failed: Option<(usize, String, String)>,
+    /// The book was swapped wholesale (restore / journal undo): the engine
+    /// diff queue cannot represent this exec, replicas must resync.
+    pub needs_resync: bool,
 }
 
 impl ExecOutput {
@@ -77,6 +80,7 @@ impl ExecOutput {
 /// Execute a DSL script against a session. `author` labels highlights.
 pub fn exec(session: &mut Session, script: &str, author: &str) -> ExecOutput {
     let mut out = ExecOutput::default();
+    session.needs_resync = false;
     let before = delta::snapshot(&session.book);
 
     for (i, raw_line) in script.lines().enumerate() {
@@ -94,6 +98,7 @@ pub fn exec(session: &mut Session, script: &str, author: &str) -> ExecOutput {
     }
 
     out.delta = delta::diff(&before, &session.book);
+    out.needs_resync = session.needs_resync;
     if !out.delta.is_empty() {
         session.invalidate();
     }
@@ -1057,12 +1062,35 @@ fn cmd_restore(session: &mut Session, rest: &str) -> Result<String> {
 }
 
 fn cmd_undo(session: &mut Session) -> Result<String> {
-    if !session.book.can_undo() {
-        return Err(Error::from("nothing to undo"));
+    if session.book.can_undo() {
+        session.book.undo()?;
+        session.invalidate();
+        return Ok("undone".to_string());
     }
-    session.book.undo()?;
-    session.invalidate();
-    Ok("undone".to_string())
+    // Engine history is empty (fresh or rehydrated session). Fall back to the
+    // journal when the server layer installed one.
+    let Some(history) = &session.history else {
+        return Err(Error::from("nothing to undo"));
+    };
+    if session.needs_resync {
+        // The journal's notion of "previous state" only advances when an exec
+        // completes, so a second journal undo inside the same script would
+        // rebuild the same state.
+        return Err(Error::from(
+            "one journal undo per exec — run further undos in a separate call",
+        ));
+    }
+    match history.state_back(1)? {
+        Some(book) => {
+            session.book = book;
+            session.needs_resync = true;
+            session.invalidate();
+            Ok("undone (rebuilt from the exec journal)".to_string())
+        }
+        None => Err(Error::from(
+            "undo history does not reach back that far (journal compacted); use `restore <checkpoint>` instead",
+        )),
+    }
 }
 
 fn cmd_redo(session: &mut Session) -> Result<String> {
@@ -1360,6 +1388,50 @@ mod tests {
         assert!(out.ok(), "{:?}", out.failed);
         assert_eq!(s.book.value(0, 1, 1), Value::Text("replaced".into()));
         assert_eq!(s.book.value(1, 1, 1), Value::Number(42.0));
+    }
+
+    #[test]
+    fn undo_falls_back_to_history_provider() {
+        use crate::session::HistoryProvider;
+        struct Fixed(Vec<u8>);
+        impl HistoryProvider for Fixed {
+            fn state_back(&self, _steps: u32) -> crate::Result<Option<Book>> {
+                Ok(Some(Book::from_bytes(&self.0)?))
+            }
+        }
+        // Previous state: A1 = 5.
+        let mut prev = Book::new_empty("t").unwrap();
+        prev.set_input(0, 1, 1, "5").unwrap();
+        let prev_bytes = prev.to_bytes();
+        // Current state, rehydrated (no engine history): A1 = 9.
+        let mut cur = Book::new_empty("t").unwrap();
+        cur.set_input(0, 1, 1, "9").unwrap();
+        let mut s = Session::new(Book::from_bytes(&cur.to_bytes()).unwrap(), None);
+        assert!(!s.book.can_undo(), "rehydrated book has no engine history");
+
+        // Without a provider: plain error.
+        let out = run(&mut s, "undo");
+        assert!(!out.ok());
+
+        s.history = Some(Box::new(Fixed(prev_bytes)));
+        let out = run(&mut s, "undo\nexpect A1 == 5");
+        assert!(out.ok(), "{:?}", out.failed);
+        assert!(out.needs_resync, "book swap flagged for replicas");
+        assert!(out.results[0].contains("journal"), "{}", out.results[0]);
+
+        // A second journal undo inside the same exec is refused; a fresh
+        // exec may undo again.
+        let out = run(&mut s, "undo\nundo");
+        assert!(!out.ok());
+        assert!(out.failed.as_ref().unwrap().2.contains("separate call"));
+    }
+
+    #[test]
+    fn restore_flags_resync() {
+        let mut s = orders_session();
+        let out = run(&mut s, "checkpoint a\nset B2 77\nrestore a\nexpect B2 == 10");
+        assert!(out.ok(), "{:?}", out.failed);
+        assert!(out.needs_resync);
     }
 
     #[test]
