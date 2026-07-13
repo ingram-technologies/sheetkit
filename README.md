@@ -113,6 +113,13 @@ form — which makes "these 9,999 cells are all `=D{row}*E{row}`" a lookup, not
 an analysis, and makes the one cell that *breaks* the pattern stand out. That
 single fact powers most of the compression.
 
+## Showcase
+
+The same five tools driven over a real MCP stdio session against a
+10,000-row CSV — computed column, verified fill, sort, cross-sheet summary —
+with the result opened in the stock IronCalc web app:
+[docs/showcase.md](docs/showcase.md).
+
 ## Status
 
 Early but real: the five MCP tools and the full command language work
