@@ -61,17 +61,24 @@ impl Value {
 }
 
 /// Render a number the way a human would type it: integers bare, and float
-/// representation dust (12877.689999999999) rounded away.
+/// representation dust (12877.689999999999) rounded away by keeping 12
+/// significant digits.
 pub fn format_number(n: f64) -> String {
-    let n = if n.is_finite() && n.abs() < 1e12 {
-        (n * 1e10).round() / 1e10
+    let rounded = if n.is_finite() && n != 0.0 {
+        let magnitude = n.abs().log10().floor();
+        let factor = 10f64.powf(11.0 - magnitude);
+        if factor.is_finite() && (n * factor).abs() < 9e15 {
+            (n * factor).round() / factor
+        } else {
+            n
+        }
     } else {
         n
     };
-    if n == n.trunc() && n.abs() < 1e15 {
-        format!("{}", n as i64)
+    if rounded == rounded.trunc() && rounded.abs() < 1e15 {
+        format!("{}", rounded as i64)
     } else {
-        format!("{n}")
+        format!("{rounded}")
     }
 }
 

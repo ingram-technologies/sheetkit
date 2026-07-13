@@ -247,13 +247,22 @@ fn pad(s: &str, width: usize) -> String {
     }
 }
 
+/// Truncate a cell for display. Formula cells keep their computed value and
+/// lose the middle of the formula instead — the value is the load-bearing part.
 fn truncate(s: &str, max: usize) -> String {
     if display_len(s) <= max {
-        s.to_string()
-    } else {
-        let cut: String = s.chars().take(max - 1).collect();
-        format!("{cut}…")
+        return s.to_string();
     }
+    if let Some((formula, value)) = s.rsplit_once(" ⇒ ") {
+        let suffix = format!(" ⇒ {value}");
+        let suffix_len = display_len(&suffix);
+        if suffix_len + 4 <= max {
+            let head: String = formula.chars().take(max - suffix_len - 1).collect();
+            return format!("{head}…{suffix}");
+        }
+    }
+    let cut: String = s.chars().take(max - 1).collect();
+    format!("{cut}…")
 }
 
 pub fn render_sparse(book: &Book, target: &Resolved, budget_chars: usize) -> String {
