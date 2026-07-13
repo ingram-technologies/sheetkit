@@ -60,6 +60,33 @@ add a margin column, reconcile the totals" — lands in well under ten tool
 calls on a 10k-row file, with every intermediate state verifiable from the
 transcript alone.
 
+## Server mode
+
+`sheetd serve` runs the same engine as a network service — one authoritative
+session per workbook, three doors into it:
+
+```sh
+sheetd serve --addr 127.0.0.1:7373 --data-dir ./books --token $SHEETD_TOKEN
+```
+
+- **`POST /mcp`** — the same five tools over streamable-HTTP MCP (stateless
+  JSON responses; session affinity lives in the `workbook_id` argument).
+- **REST workbook API** — `POST /workbooks` (create/import xlsx/csv/ic bytes),
+  `GET /workbooks/{id}` (sketch), `POST /workbooks/{id}/exec`,
+  `GET /workbooks/{id}/view`, `GET|PUT /workbooks/{id}/file`,
+  `GET /workbooks/{id}/highlights`, `DELETE /workbooks/{id}`.
+- **`GET /workbooks/{id}/channel`** — a WebSocket where every applied script
+  fans out with its recalc delta, the acting principal, exec lifecycle
+  (`agent.status`), presence, highlights, and the engine's own diff blob so a
+  same-version replica (e.g. the wasm build) can mirror the grid live. See
+  [docs/channel-protocol.md](docs/channel-protocol.md).
+
+Workbooks persist as `.ic` blobs under `--data-dir` after every mutation and
+rehydrate on demand — ids survive restarts. Auth is a static bearer token;
+callers are labeled by a configurable principal header
+(`SHEETD_PRINCIPAL_HEADER`, default `x-principal`), which is how a UI knows
+*who* — human or agent — made each change.
+
 ## The command language
 
 One grammar shared by MCP, the REPL, and library callers (`sheet_exec` runs a
@@ -122,11 +149,12 @@ with the result opened in the stock IronCalc web app:
 
 ## Status
 
-Early but real: the five MCP tools and the full command language work
-end-to-end (unit tests plus a spawn-the-binary MCP protocol test). Not yet
-here: streamable-HTTP transport, a realtime change channel for UIs, Google
-Sheets pull/push, richer SheetCompressor-style encodings for very wide/sparse
-sheets.
+Early but real: the five MCP tools (stdio and streamable HTTP), the full
+command language, the REST API, and the realtime channel all work end-to-end
+— unit tests plus spawn-the-binary protocol tests for both transports, and
+compression acceptance tests (a 50,000-row workbook sketches in under 3k
+tokens with zero silent truncation). Not yet here: Google Sheets pull/push,
+channel replay buffers (clients resync on gaps), per-workbook access control.
 
 ## License
 

@@ -157,6 +157,16 @@ impl Manager {
         id
     }
 
+    /// Register a session under a caller-chosen id (server mode uses stable
+    /// random ids that survive restarts via the blob store).
+    pub fn insert_with_id(&mut self, id: &str, session: Session) {
+        self.sessions.insert(id.to_string(), session);
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        self.sessions.contains_key(id)
+    }
+
     pub fn get_mut(&mut self, id: &str) -> Result<&mut Session> {
         if !self.sessions.contains_key(id) {
             let open = if self.sessions.is_empty() {

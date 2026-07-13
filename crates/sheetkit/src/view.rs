@@ -343,7 +343,7 @@ pub fn render_sparse(book: &Book, target: &Resolved, budget_chars: usize) -> Str
         return out;
     }
     // Most repeated first — those compress best and describe the sheet fastest.
-    groups.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    groups.sort_by_key(|(_, cells)| std::cmp::Reverse(cells.len()));
 
     let mut used = out.len();
     let mut shown_groups = 0usize;

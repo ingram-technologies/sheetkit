@@ -3,12 +3,17 @@ name = "sheetd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Spreadsheet engine server: MCP over stdio and an interactive REPL"
+description = "Spreadsheet engine server: MCP (stdio + streamable HTTP), REST workbook API, realtime channel, and an interactive REPL"
 
 [dependencies]
 sheetkit = { path = "../sheetkit" }
 serde.workspace = true
 serde_json.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"
+ureq = { version = "2", features = ["json"] }
+tungstenite = "0.24"

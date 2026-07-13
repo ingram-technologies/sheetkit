@@ -105,6 +105,45 @@ impl Book {
         self.um.to_bytes()
     }
 
+    /// Drain the engine's pending diff queue (bitcode blob). Replicas running
+    /// the same engine version apply it with [`Book::apply_diffs`]; anything
+    /// else must treat it as opaque. Empty when nothing changed.
+    pub fn flush_diffs(&mut self) -> Vec<u8> {
+        self.um.flush_send_queue()
+    }
+
+    /// Apply a diff blob produced by another instance's [`Book::flush_diffs`].
+    pub fn apply_diffs(&mut self, blob: &[u8]) -> Result<()> {
+        self.um.apply_external_diffs(blob)?;
+        Ok(())
+    }
+
+    /// Import a workbook from xlsx bytes (no file needed).
+    pub fn from_xlsx_bytes(bytes: &[u8], name: &str) -> Result<Book> {
+        let workbook = import::load_from_xlsx_bytes(bytes, name, LOCALE, TIMEZONE)
+            .map_err(|e| Error::from(format!("failed to read xlsx bytes: {e}")))?;
+        let model = ironcalc_base::Model::from_workbook(workbook, LANGUAGE)
+            .map_err(|e| Error::from(format!("failed to build model: {e}")))?;
+        let mut um = UserModel::from_model(model);
+        um.evaluate();
+        Ok(Book { um })
+    }
+
+    /// Export the workbook as xlsx bytes.
+    pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let out = export::save_xlsx_to_writer(self.um.get_model(), cursor)
+            .map_err(|e| Error::from(format!("failed to write xlsx: {e}")))?;
+        Ok(out.into_inner())
+    }
+
+    /// Import a workbook from CSV text.
+    pub fn from_csv_str(csv: &str, name: &str) -> Result<Book> {
+        let mut book = Book::new_empty(name)?;
+        book.paste_csv(0, CellRef { row: 1, col: 1 }, csv)?;
+        Ok(book)
+    }
+
     /// Open a workbook from a file path; the format is chosen by extension
     /// (`.xlsx`, `.ic`/`.icalc`, `.csv` — anything else is an error).
     pub fn open(path: &str) -> Result<Book> {
@@ -135,9 +174,7 @@ impl Book {
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("workbook");
-                let mut book = Book::new_empty(name)?;
-                book.paste_csv(0, CellRef { row: 1, col: 1 }, &csv)?;
-                Ok(book)
+                Book::from_csv_str(&csv, name)
             }
             other => Err(Error::from(format!(
                 "unsupported file extension {other:?} (expected xlsx, ic or csv)"
