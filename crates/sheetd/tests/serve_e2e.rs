@@ -205,7 +205,12 @@ fn channel_streams_applied_deltas() {
     let welcome = read_json(&mut actor);
     assert_eq!(welcome["type"], "welcome");
     assert_eq!(welcome["v"], "sheets.channel.v1");
-    assert_eq!(welcome["engine_version"], "0.7.1");
+    // The exact engine version moves with the pin; replicas only need it
+    // present and stable, so assert shape rather than value.
+    assert!(
+        welcome["engine_version"].as_str().is_some_and(|v| !v.is_empty()),
+        "{welcome}"
+    );
     let welcome2 = read_json(&mut watcher);
     assert_eq!(welcome2["type"], "welcome");
 

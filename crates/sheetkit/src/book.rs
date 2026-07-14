@@ -660,8 +660,15 @@ pub(crate) fn cell_to_value(cell: &Cell, shared_strings: &[String]) -> Value {
     use ironcalc_base::language::get_language;
     let language = get_language(LANGUAGE).expect("en language");
     // Text cells stay text even when they read like "#N/A"; only error cells
-    // and error formula results classify as errors.
-    let is_error_kind = matches!(cell, Cell::ErrorCell { .. } | Cell::CellFormulaError { .. });
+    // and error formula/spill results classify as errors.
+    use ironcalc_base::types::{FormulaValue, SpillValue};
+    let is_error_kind = matches!(
+        cell,
+        Cell::ErrorCell { .. }
+            | Cell::CellFormula { v: FormulaValue::Error { .. }, .. }
+            | Cell::ArrayFormula { v: FormulaValue::Error { .. }, .. }
+            | Cell::SpillCell { v: SpillValue::Error(_), .. }
+    );
     match cell.value(shared_strings, language) {
         CellValue::None => Value::Empty,
         CellValue::Number(n) => Value::Number(n),

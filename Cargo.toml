@@ -11,7 +11,12 @@ description = "An LLM-native spreadsheet toolkit built on the IronCalc engine"
 [workspace.dependencies]
 # The engine version is a protocol contract: sync blobs and .ic snapshots are
 # version-locked. Bump both crates together, never independently.
-ironcalc_base = "=0.7.1"
-ironcalc = "=0.7.1"
+#
+# Pinned to a git revision rather than the crates.io release: upstream main
+# carries ~150 functions (SUMPRODUCT, FILTER, SORT, UNIQUE, LET, LAMBDA, …)
+# and the dynamic-array engine that 0.7.1 predates. Any replica (browser
+# wasm build, checkpoint store) must be built from this exact rev.
+ironcalc_base = { git = "https://github.com/ironcalc/IronCalc", rev = "9ee7e0662dd30178db3198568daf46f406cbdda0" }
+ironcalc = { git = "https://github.com/ironcalc/IronCalc", rev = "9ee7e0662dd30178db3198568daf46f406cbdda0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

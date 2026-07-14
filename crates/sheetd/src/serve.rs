@@ -34,9 +34,11 @@ use crate::rpc;
 use crate::tools::{ExecEvent, ExecObserver, Tools};
 
 pub const CHANNEL_PROTOCOL: &str = "sheets.channel.v1";
-/// The engine crate version this build embeds. Diff blobs on the channel are
-/// version-locked: replicas must run the same version (see UPSTREAM.md).
-pub const ENGINE_VERSION: &str = "0.7.1";
+/// The engine build this binary embeds. Diff blobs, `.ic` snapshots, and the
+/// journal are version-locked: replicas (including any wasm build) must be
+/// compiled from the same engine source (see UPSTREAM.md). Since we pin a git
+/// revision rather than a release, the version string carries the short rev.
+pub const ENGINE_VERSION: &str = "0.7.1-git.9ee7e066";
 
 pub struct ServeOptions {
     pub addr: String,
