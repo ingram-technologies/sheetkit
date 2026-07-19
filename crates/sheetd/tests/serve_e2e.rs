@@ -50,20 +50,22 @@ impl Server {
 
     fn post_json(&self, path: &str, body: Json) -> Json {
         ureq::post(&self.url(path))
-            .set("Authorization", &format!("Bearer {TOKEN}"))
-            .set("x-principal", "resty")
+            .header("Authorization", &format!("Bearer {TOKEN}"))
+            .header("x-principal", "resty")
             .send_json(body)
             .expect("POST ok")
-            .into_json()
+            .into_body()
+            .read_json()
             .expect("JSON response")
     }
 
     fn get_json(&self, path: &str) -> Json {
         ureq::get(&self.url(path))
-            .set("Authorization", &format!("Bearer {TOKEN}"))
+            .header("Authorization", &format!("Bearer {TOKEN}"))
             .call()
             .expect("GET ok")
-            .into_json()
+            .into_body()
+            .read_json()
             .expect("JSON response")
     }
 }
@@ -81,23 +83,36 @@ fn three_doors_one_session() {
     let server = Server::spawn(dir.path());
 
     // -- health is open, everything else needs the token --------------------
-    let health: Json = ureq::get(&server.url("/health")).call().unwrap().into_json().unwrap();
+    let health: Json = ureq::get(&server.url("/health"))
+        .call()
+        .unwrap()
+        .into_body()
+        .read_json()
+        .unwrap();
     assert_eq!(health["ok"], json!(true));
     assert_eq!(health["channel_protocol"], "sheets.channel.v1");
 
-    let denied = ureq::get(&server.url("/workbooks")).call();
+    // A ureq agent that returns non-2xx as `Ok` (body intact) instead of a
+    // bodyless `Err(StatusCode)`, so we can assert on the status ourselves.
+    let no_status_err = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build(),
+    );
+    let denied = no_status_err.get(&server.url("/workbooks")).call();
     match denied {
-        Err(ureq::Error::Status(401, _)) => {}
+        Ok(r) if r.status().as_u16() == 401 => {}
         other => panic!("expected 401, got {other:?}"),
     }
 
     // -- REST door: create from CSV ------------------------------------------
     let csv = "Item,Qty,Price\nApe,2,3.5\nBee,10,0.4\nCat,1,12\n";
     let created: Json = ureq::post(&server.url("/workbooks?name=orders&format=csv"))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
-        .send_bytes(csv.as_bytes())
+        .header("Authorization", &format!("Bearer {TOKEN}"))
+        .send(csv.as_bytes())
         .unwrap()
-        .into_json()
+        .into_body()
+        .read_json()
         .unwrap();
     let id = created["workbook_id"].as_str().unwrap().to_string();
     assert!(id.starts_with("wb-"), "{id}");
@@ -106,11 +121,12 @@ fn three_doors_one_session() {
     // -- MCP door works against the same workbook ----------------------------
     let mcp = |body: Json| -> Json {
         ureq::post(&server.url("/mcp"))
-            .set("Authorization", &format!("Bearer {TOKEN}"))
-            .set("x-principal", "mcp-agent")
+            .header("Authorization", &format!("Bearer {TOKEN}"))
+            .header("x-principal", "mcp-agent")
             .send_json(body)
             .unwrap()
-            .into_json()
+            .into_body()
+            .read_json()
             .unwrap()
     };
     let init = mcp(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
@@ -130,7 +146,7 @@ fn three_doors_one_session() {
 
     // Notifications return 202 with no body.
     let resp = ureq::post(&server.url("/mcp"))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
+        .header("Authorization", &format!("Bearer {TOKEN}"))
         .send_json(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
         .unwrap();
     assert_eq!(resp.status(), 202);
@@ -148,9 +164,10 @@ fn three_doors_one_session() {
     // -- file export round-trips ------------------------------------------------
     let mut xlsx: Vec<u8> = Vec::new();
     ureq::get(&server.url(&format!("/workbooks/{id}/file?format=xlsx")))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
+        .header("Authorization", &format!("Bearer {TOKEN}"))
         .call()
         .unwrap()
+        .into_body()
         .into_reader()
         .read_to_end(&mut xlsx)
         .unwrap();
@@ -160,10 +177,11 @@ fn three_doors_one_session() {
 
     // -- persistence: close, then rehydrate from the blob store ----------------
     let closed = ureq::delete(&server.url(&format!("/workbooks/{id}")))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
+        .header("Authorization", &format!("Bearer {TOKEN}"))
         .call()
         .unwrap()
-        .into_json::<Json>()
+        .into_body()
+        .read_json::<Json>()
         .unwrap();
     assert_eq!(closed["closed"].as_str().unwrap(), id);
     let back = server.get_json(&format!("/workbooks/{id}"));
@@ -176,10 +194,11 @@ fn channel_streams_applied_deltas() {
     let server = Server::spawn(dir.path());
 
     let created: Json = ureq::post(&server.url("/workbooks?name=live&format=csv"))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
-        .send_bytes(b"A,B\n1,2\n")
+        .header("Authorization", &format!("Bearer {TOKEN}"))
+        .send(b"A,B\n1,2\n" as &[u8])
         .unwrap()
-        .into_json()
+        .into_body()
+        .read_json()
         .unwrap();
     let id = created["workbook_id"].as_str().unwrap().to_string();
 

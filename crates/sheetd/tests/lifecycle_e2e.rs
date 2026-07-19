@@ -50,31 +50,41 @@ impl Server {
 
     fn create_csv(&self, csv: &str) -> String {
         let created: Json = ureq::post(&self.url("/workbooks?format=csv"))
-            .set("Authorization", &format!("Bearer {TOKEN}"))
-            .send_bytes(csv.as_bytes())
+            .header("Authorization", &format!("Bearer {TOKEN}"))
+            .send(csv.as_bytes())
             .unwrap()
-            .into_json()
+            .into_body()
+            .read_json()
             .unwrap();
         created["workbook_id"].as_str().unwrap().to_string()
     }
 
     fn exec(&self, id: &str, script: &str) -> String {
         let resp: Json = ureq::post(&self.url(&format!("/workbooks/{id}/exec")))
-            .set("Authorization", &format!("Bearer {TOKEN}"))
+            .header("Authorization", &format!("Bearer {TOKEN}"))
             .send_json(json!({ "script": script }))
             .unwrap()
-            .into_json()
+            .into_body()
+            .read_json()
             .unwrap();
         resp["output"].as_str().unwrap_or_default().to_string()
     }
 
     fn get(&self, path: &str) -> Result<Json, u16> {
-        match ureq::get(&self.url(path))
-            .set("Authorization", &format!("Bearer {TOKEN}"))
+        // A ureq agent that returns non-2xx as `Ok` (body intact) instead of a
+        // bodyless `Err(StatusCode)`, so we can branch on the status ourselves.
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .http_status_as_error(false)
+                .build(),
+        );
+        match agent
+            .get(&self.url(path))
+            .header("Authorization", &format!("Bearer {TOKEN}"))
             .call()
         {
-            Ok(r) => Ok(r.into_json().unwrap()),
-            Err(ureq::Error::Status(code, _)) => Err(code),
+            Ok(r) if r.status().is_success() => Ok(r.into_body().read_json().unwrap()),
+            Ok(r) => Err(r.status().as_u16()),
             Err(e) => panic!("transport error: {e}"),
         }
     }
@@ -174,12 +184,18 @@ fn admission_control_rejects_oversized() {
     for i in 0..5 {
         csv.push_str(&format!("{i},{i},{i},{i}\n"));
     }
-    let resp = ureq::post(&server.url("/workbooks?format=csv"))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
-        .send_bytes(csv.as_bytes());
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .build(),
+    );
+    let resp = agent
+        .post(&server.url("/workbooks?format=csv"))
+        .header("Authorization", &format!("Bearer {TOKEN}"))
+        .send(csv.as_bytes());
     match resp {
-        Err(ureq::Error::Status(422, r)) => {
-            let body: Json = r.into_json().unwrap();
+        Ok(r) if r.status().as_u16() == 422 => {
+            let body: Json = r.into_body().read_json().unwrap();
             assert!(body["error"].as_str().unwrap().contains("limit of 10"), "{body}");
         }
         other => panic!("expected 422, got {other:?}"),
@@ -196,14 +212,14 @@ fn purge_removes_blobs() {
 
     // Plain close: still rehydratable.
     ureq::delete(&server.url(&format!("/workbooks/{id}")))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
+        .header("Authorization", &format!("Bearer {TOKEN}"))
         .call()
         .unwrap();
     assert!(server.get(&format!("/workbooks/{id}")).is_ok(), "rehydrates after close");
 
     // Purge: gone for real, files removed.
     ureq::delete(&server.url(&format!("/workbooks/{id}?purge=true")))
-        .set("Authorization", &format!("Bearer {TOKEN}"))
+        .header("Authorization", &format!("Bearer {TOKEN}"))
         .call()
         .unwrap();
     assert_eq!(server.get(&format!("/workbooks/{id}")), Err(404));
