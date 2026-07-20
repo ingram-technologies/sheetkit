@@ -74,7 +74,10 @@ impl Store {
     fn ckpt_path(&self, id: &str, name: &str) -> PathBuf {
         let mut h = DefaultHasher::new();
         name.hash(&mut h);
-        self.path(&format!("{id}.ckpt-{:08x}.ic", (h.finish() & 0xffff_ffff) as u32))
+        self.path(&format!(
+            "{id}.ckpt-{:08x}.ic",
+            (h.finish() & 0xffff_ffff) as u32
+        ))
     }
 
     fn gsheets_path(&self, id: &str) -> PathBuf {
@@ -89,7 +92,13 @@ impl Store {
 
     /// Write head blob + meta + ephemera for a session. The base is only
     /// (re)written when absent or when `reset_base` demands a chain break.
-    pub fn save_session(&self, id: &str, session: &Session, seq: u64, reset_base: bool) -> Result<()> {
+    pub fn save_session(
+        &self,
+        id: &str,
+        session: &Session,
+        seq: u64,
+        reset_base: bool,
+    ) -> Result<()> {
         let head = session.book.to_bytes();
         write_atomic(&self.head_path(id), &head)?;
         let mut base_seq = self.load_meta(id).map(|m| m.base_seq).unwrap_or(0);
@@ -100,7 +109,10 @@ impl Store {
             let _ = std::fs::remove_file(self.journal_path(id));
         }
         // Checkpoint blobs: write new ones, drop removed ones.
-        let old_names: Vec<String> = self.load_meta(id).map(|m| m.checkpoints).unwrap_or_default();
+        let old_names: Vec<String> = self
+            .load_meta(id)
+            .map(|m| m.checkpoints)
+            .unwrap_or_default();
         let names: Vec<String> = session.checkpoint_names();
         for (name, bytes) in session.checkpoints_raw() {
             let p = self.ckpt_path(id, name);
@@ -316,7 +328,11 @@ impl Store {
             highlights,
             checkpoints: doc["checkpoints"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|n| n.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|n| n.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             origin: doc["origin"].as_str().map(String::from),
         })
@@ -354,7 +370,10 @@ impl Store {
         let doc: Json = serde_json::from_str(&text)
             .map_err(|e| Error::from(format!("corrupt gsheets baseline for {id}: {e}")))?;
         let mut baseline = sheetkit::gsheets::Baseline {
-            spreadsheet_id: doc["spreadsheet_id"].as_str().unwrap_or_default().to_string(),
+            spreadsheet_id: doc["spreadsheet_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             title: doc["title"].as_str().unwrap_or_default().to_string(),
             sheets: Vec::new(),
             contents: Default::default(),
@@ -374,9 +393,10 @@ impl Store {
                 entry[2].as_i64(),
                 entry[3].as_str(),
             ) {
-                baseline
-                    .contents
-                    .insert((sheet.to_string(), row as i32, col as i32), content.to_string());
+                baseline.contents.insert(
+                    (sheet.to_string(), row as i32, col as i32),
+                    content.to_string(),
+                );
             }
         }
         Ok(Some(baseline))
@@ -434,7 +454,11 @@ impl Store {
             if resident.contains(&id) {
                 continue;
             }
-            if now.duration_since(mtime).map(|age| age > max_age).unwrap_or(false) {
+            if now
+                .duration_since(mtime)
+                .map(|age| age > max_age)
+                .unwrap_or(false)
+            {
                 let _ = self.delete(&id, true);
                 removed.push(id);
             }

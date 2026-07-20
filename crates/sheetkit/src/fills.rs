@@ -33,15 +33,27 @@ impl FillRun {
 
     pub fn range(&self) -> Range {
         Range::new(
-            CellRef { row: self.row_start, col: self.col },
-            CellRef { row: self.row_end, col: self.col },
+            CellRef {
+                row: self.row_start,
+                col: self.col,
+            },
+            CellRef {
+                row: self.row_end,
+                col: self.col,
+            },
         )
     }
 }
 
 /// Detect fill runs in one column of a range. Only runs of at least
 /// `min_len` cells are reported; shorter formula groups stay individual.
-pub fn column_fill_runs(book: &Book, sheet: u32, col: i32, range: Range, min_len: i32) -> Vec<FillRun> {
+pub fn column_fill_runs(
+    book: &Book,
+    sheet: u32,
+    col: i32,
+    range: Range,
+    min_len: i32,
+) -> Vec<FillRun> {
     // Collect (row, formula_index) for formula cells in this column, sorted.
     let mut rows: Vec<(i32, i32)> = Vec::new();
     book.for_each_cell(sheet, |row, c, cell| {

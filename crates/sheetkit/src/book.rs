@@ -299,8 +299,14 @@ impl Book {
             None
         } else {
             Some(Range::new(
-                CellRef { row: min_row, col: min_col },
-                CellRef { row: max_row, col: max_col },
+                CellRef {
+                    row: min_row,
+                    col: min_col,
+                },
+                CellRef {
+                    row: max_row,
+                    col: max_col,
+                },
             ))
         }
     }
@@ -381,7 +387,13 @@ impl Book {
             .workbook
             .tables
             .values()
-            .map(|t| (t.display_name.clone(), t.sheet_name.clone(), t.reference.clone()))
+            .map(|t| {
+                (
+                    t.display_name.clone(),
+                    t.sheet_name.clone(),
+                    t.reference.clone(),
+                )
+            })
             .collect()
     }
 
@@ -519,7 +531,12 @@ impl Book {
                 .get(sheet_index as usize)
                 .cloned()
                 .ok_or_else(|| Error::from(format!("no sheet at index {sheet_index}")))?;
-            Ok(Resolved { sheet_index, sheet_name, range, via })
+            Ok(Resolved {
+                sheet_index,
+                sheet_name,
+                range,
+                via,
+            })
         };
         match &target.kind {
             TargetKind::Range(r) => make(sheet_index, *r, None),
@@ -530,8 +547,14 @@ impl Book {
                 make(
                     sheet_index,
                     Range::new(
-                        CellRef { row: used.start.row, col: *start },
-                        CellRef { row: used.end.row, col: *end },
+                        CellRef {
+                            row: used.start.row,
+                            col: *start,
+                        },
+                        CellRef {
+                            row: used.end.row,
+                            col: *end,
+                        },
                     ),
                     None,
                 )
@@ -543,8 +566,14 @@ impl Book {
                 make(
                     sheet_index,
                     Range::new(
-                        CellRef { row: *start, col: used.start.col },
-                        CellRef { row: *end, col: used.end.col },
+                        CellRef {
+                            row: *start,
+                            col: used.start.col,
+                        },
+                        CellRef {
+                            row: *end,
+                            col: used.end.col,
+                        },
                     ),
                     None,
                 )
@@ -671,9 +700,18 @@ pub(crate) fn cell_to_value(cell: &Cell, shared_strings: &[String]) -> Value {
     let is_error_kind = matches!(
         cell,
         Cell::ErrorCell { .. }
-            | Cell::CellFormula { v: FormulaValue::Error { .. }, .. }
-            | Cell::ArrayFormula { v: FormulaValue::Error { .. }, .. }
-            | Cell::SpillCell { v: SpillValue::Error(_), .. }
+            | Cell::CellFormula {
+                v: FormulaValue::Error { .. },
+                ..
+            }
+            | Cell::ArrayFormula {
+                v: FormulaValue::Error { .. },
+                ..
+            }
+            | Cell::SpillCell {
+                v: SpillValue::Error(_),
+                ..
+            }
     );
     match cell.value(shared_strings, language) {
         CellValue::None => Value::Empty,
@@ -728,7 +766,8 @@ mod tests {
     #[test]
     fn csv_roundtrip() {
         let mut book = Book::new_empty("t").unwrap();
-        book.paste_csv(0, CellRef { row: 1, col: 1 }, "a,b\n1,2\n").unwrap();
+        book.paste_csv(0, CellRef { row: 1, col: 1 }, "a,b\n1,2\n")
+            .unwrap();
         assert_eq!(book.value(0, 2, 2), Value::Number(2.0));
         let csv = book.to_csv(0).unwrap();
         assert!(csv.starts_with("a,b\n"));

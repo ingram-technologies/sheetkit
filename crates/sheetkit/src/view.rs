@@ -28,14 +28,22 @@ pub struct ViewOptions {
 
 impl Default for ViewOptions {
     fn default() -> Self {
-        ViewOptions { mode: None, budget_tokens: 2000 }
+        ViewOptions {
+            mode: None,
+            budget_tokens: 2000,
+        }
     }
 }
 
 /// Cells at or under this count render dense by default.
 const DENSE_CELL_LIMIT: i64 = 600;
 
-pub fn render_view(book: &Book, target: &Resolved, regions: &[Region], opts: ViewOptions) -> String {
+pub fn render_view(
+    book: &Book,
+    target: &Resolved,
+    regions: &[Region],
+    opts: ViewOptions,
+) -> String {
     let budget_chars = opts.budget_tokens.saturating_mul(4).max(400);
     let region = regions.iter().find(|r| {
         r.sheet == target.sheet_index
@@ -95,7 +103,9 @@ fn display_value(book: &Book, sheet: u32, row: i32, col: i32, v: &Value) -> Stri
     if let Value::Number(_) = v {
         let fmt = book.num_fmt(sheet, row, col);
         let lower = fmt.to_lowercase();
-        if lower != "general" && (lower.contains('y') || (lower.contains('d') && lower.contains('m'))) {
+        if lower != "general"
+            && (lower.contains('y') || (lower.contains('d') && lower.contains('m')))
+        {
             return book.formatted_value(sheet, row, col);
         }
     }
@@ -144,7 +154,10 @@ pub fn render_dense(
     let tail_rows = 2.min(total_rows as usize);
 
     for row in range.start.row..=range.end.row {
-        let cells: Vec<String> = cols.iter().map(|&c| cell_text(book, sheet, row, c)).collect();
+        let cells: Vec<String> = cols
+            .iter()
+            .map(|&c| cell_text(book, sheet, row, c))
+            .collect();
         used_chars += cells.iter().map(|s| s.len() + 2).sum::<usize>() + per_row_reserve;
         lines.push((row, cells));
         if used_chars > budget_chars && (row as i64) < range.end.row as i64 - tail_rows as i64 {
@@ -154,7 +167,10 @@ pub fn render_dense(
     }
     if elided_from.is_some() {
         for row in (range.end.row - tail_rows as i32 + 1)..=range.end.row {
-            let cells: Vec<String> = cols.iter().map(|&c| cell_text(book, sheet, row, c)).collect();
+            let cells: Vec<String> = cols
+                .iter()
+                .map(|&c| cell_text(book, sheet, row, c))
+                .collect();
             lines.push((row, cells));
         }
     }
@@ -198,7 +214,10 @@ pub fn render_dense(
         match line {
             RowLine::Cells(row, cells) => {
                 if let Some(from) = elided_from {
-                    if *row >= from && *row > range.end.row - tail_rows as i32 && !out.ends_with("⋮\n") {
+                    if *row >= from
+                        && *row > range.end.row - tail_rows as i32
+                        && !out.ends_with("⋮\n")
+                    {
                         // fallthrough; elision marker handled below
                     }
                 }
@@ -213,10 +232,7 @@ pub fn render_dense(
                 out.push('\n');
             }
             RowLine::EmptyGap(from, to) => {
-                out.push_str(&format!(
-                    "{:>row_digits$} · rows {from}–{to} empty\n",
-                    "⋮"
-                ));
+                out.push_str(&format!("{:>row_digits$} · rows {from}–{to} empty\n", "⋮"));
             }
         }
     }
@@ -384,7 +400,11 @@ fn compress_cells(cells: &[(i32, i32)]) -> String {
             end_row = sorted[i + 1].0;
             i += 1;
         }
-        let a = CellRef { row: start_row, col }.a1();
+        let a = CellRef {
+            row: start_row,
+            col,
+        }
+        .a1();
         if end_row > start_row {
             parts.push(format!("{a}:{}", CellRef { row: end_row, col }.a1()));
         } else {
@@ -404,7 +424,11 @@ pub fn render_region(_book: &Book, region: &Region) -> String {
         region.range.a1(),
         region.body_rows(),
         if region.body_rows() == 1 { "" } else { "s" },
-        if region.header_row.is_some() { " + header" } else { "" },
+        if region.header_row.is_some() {
+            " + header"
+        } else {
+            ""
+        },
     );
     for c in &region.columns {
         let letter = number_to_column(c.col).unwrap_or_default();
@@ -440,7 +464,9 @@ pub fn render_region(_book: &Book, region: &Region) -> String {
                 Dtype::Number | Dtype::Date => {
                     let label = c.dtype.label();
                     match (&c.min_display, &c.max_display) {
-                        (Some(mn), Some(mx)) if mn == mx => facts.push(format!("{label} constant {mn}")),
+                        (Some(mn), Some(mx)) if mn == mx => {
+                            facts.push(format!("{label} constant {mn}"))
+                        }
                         (Some(mn), Some(mx)) => facts.push(format!("{label} {mn}..{mx}")),
                         _ => facts.push(label.to_string()),
                     }
@@ -462,7 +488,13 @@ pub fn render_region(_book: &Book, region: &Region) -> String {
                 let tops: Vec<String> = c
                     .top_values
                     .iter()
-                    .map(|(v, n)| if *n > 1 { format!("{v}×{n}") } else { v.clone() })
+                    .map(|(v, n)| {
+                        if *n > 1 {
+                            format!("{v}×{n}")
+                        } else {
+                            v.clone()
+                        }
+                    })
                     .collect();
                 facts.push(format!("values: {}", tops.join(", ")));
             }
@@ -471,7 +503,11 @@ pub fn render_region(_book: &Book, region: &Region) -> String {
             facts.push(format!("{} empty", c.body_rows - c.non_empty));
         }
         if c.error_count > 0 {
-            facts.push(format!("⚠ {} error{}", c.error_count, if c.error_count == 1 { "" } else { "s" }));
+            facts.push(format!(
+                "⚠ {} error{}",
+                c.error_count,
+                if c.error_count == 1 { "" } else { "s" }
+            ));
         }
         out.push_str(&format!("  {}  {}\n", pad(&head, 12), facts.join(" · ")));
     }
@@ -552,7 +588,12 @@ mod tests {
     fn dense_shows_formulas_and_values() {
         let book = sample_book();
         let (regions, _) = detect_all(&book);
-        let v = render_view(&book, &resolved(&book, "A1:D5"), &regions, ViewOptions::default());
+        let v = render_view(
+            &book,
+            &resolved(&book, "A1:D5"),
+            &regions,
+            ViewOptions::default(),
+        );
         assert!(v.contains("=B2*C2 ⇒ 7"), "{v}");
         assert!(v.contains("\"Ape\""), "{v}");
         assert!(v.contains("A\"Item\""), "{v}");
@@ -575,7 +616,10 @@ mod tests {
             &book,
             &resolved(&book, "A1:B300"),
             &regions,
-            ViewOptions { mode: Some(Mode::Dense), budget_tokens: 300 },
+            ViewOptions {
+                mode: Some(Mode::Dense),
+                budget_tokens: 300,
+            },
         );
         assert!(v.contains("elided for budget"), "{v}");
         assert!(v.contains("300 |"), "tail row shown: {v}");
@@ -601,7 +645,10 @@ mod tests {
             &book,
             &resolved(&book, "A1:E60"),
             &regions,
-            ViewOptions { mode: Some(Mode::Sparse), budget_tokens: 500 },
+            ViewOptions {
+                mode: Some(Mode::Sparse),
+                budget_tokens: 500,
+            },
         );
         assert!(v.contains("9 — A1"), "{v}");
         assert!(v.contains("\"hello\" — C50"), "{v}");
@@ -624,7 +671,10 @@ mod tests {
             &book,
             &resolved(&book, "A1:Z100"),
             &regions,
-            ViewOptions { mode: Some(Mode::Sparse), budget_tokens: 500 },
+            ViewOptions {
+                mode: Some(Mode::Sparse),
+                budget_tokens: 500,
+            },
         );
         assert!(v.contains("\"pending\" — B2:B9, D4"), "{v}");
         assert!(v.contains("\"done\" — I40"), "{v}");
@@ -662,7 +712,10 @@ mod tests {
             &book,
             &resolved(&book, "A1:AN2"),
             &regions,
-            ViewOptions { mode: Some(Mode::Dense), budget_tokens: 4000 },
+            ViewOptions {
+                mode: Some(Mode::Dense),
+                budget_tokens: 4000,
+            },
         );
         assert!(v.contains("10 columns (AE–AN) elided"), "{v}");
         assert!(v.contains("view Sheet1!AE1:AN2"), "{v}");

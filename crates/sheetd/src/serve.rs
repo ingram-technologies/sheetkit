@@ -97,7 +97,8 @@ impl ExecObserver for Broadcaster {
         // seq > 0 means the exec changed state and was journaled; the frame
         // broadcast here is byte-identical to the journal line (replayable).
         if e.seq > 0 {
-            self.0.publish(&e.workbook_id, crate::tools::applied_frame(e));
+            self.0
+                .publish(&e.workbook_id, crate::tools::applied_frame(e));
         }
         if let Some((line, error)) = &e.error {
             self.0.publish(
@@ -136,7 +137,8 @@ impl AppState {
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
-        bearer == Some(expected.as_str()) || query.get("token").map(String::as_str) == Some(expected)
+        bearer == Some(expected.as_str())
+            || query.get("token").map(String::as_str) == Some(expected)
     }
 
     fn principal(&self, headers: &HeaderMap, query: &HashMap<String, String>) -> String {
@@ -241,7 +243,11 @@ async fn health() -> impl IntoResponse {
 }
 
 fn unauthorized() -> Response {
-    (StatusCode::UNAUTHORIZED, AxumJson(json!({ "error": "missing or bad bearer token" }))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        AxumJson(json!({ "error": "missing or bad bearer token" })),
+    )
+        .into_response()
 }
 
 fn err_response(status: StatusCode, msg: &str) -> Response {
@@ -252,7 +258,10 @@ fn err_response(status: StatusCode, msg: &str) -> Response {
 
 async fn mcp_get() -> Response {
     // We don't push server-initiated messages; the spec allows refusing GET.
-    err_response(StatusCode::METHOD_NOT_ALLOWED, "this server does not offer an SSE stream; POST JSON-RPC messages to /mcp")
+    err_response(
+        StatusCode::METHOD_NOT_ALLOWED,
+        "this server does not offer an SSE stream; POST JSON-RPC messages to /mcp",
+    )
 }
 
 async fn mcp_post(
@@ -269,7 +278,11 @@ async fn mcp_post(
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                AxumJson(rpc::error_response(Json::Null, -32700, &format!("parse error: {e}"))),
+                AxumJson(rpc::error_response(
+                    Json::Null,
+                    -32700,
+                    &format!("parse error: {e}"),
+                )),
             )
                 .into_response()
         }
@@ -277,7 +290,11 @@ async fn mcp_post(
     if msg.is_array() {
         return (
             StatusCode::BAD_REQUEST,
-            AxumJson(rpc::error_response(Json::Null, -32600, "batching is not supported")),
+            AxumJson(rpc::error_response(
+                Json::Null,
+                -32600,
+                "batching is not supported",
+            )),
         )
             .into_response();
     }
@@ -313,7 +330,10 @@ async fn create_workbook(
     if !state.authorized(&headers, &query) {
         return unauthorized();
     }
-    let name = query.get("name").cloned().unwrap_or_else(|| "workbook".to_string());
+    let name = query
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| "workbook".to_string());
     let format = query.get("format").cloned().unwrap_or_else(|| {
         if body.starts_with(b"PK") {
             "xlsx".to_string()
@@ -331,7 +351,11 @@ async fn create_workbook(
                     sheetkit::view::sketch(&s.book, &regions)
                 })
                 .unwrap_or_default();
-            (StatusCode::CREATED, AxumJson(json!({ "workbook_id": id, "sketch": sketch }))).into_response()
+            (
+                StatusCode::CREATED,
+                AxumJson(json!({ "workbook_id": id, "sketch": sketch })),
+            )
+                .into_response()
         }
         Err(e) => err_response(StatusCode::UNPROCESSABLE_ENTITY, &e.0),
     }
@@ -375,7 +399,11 @@ async fn delete_workbook(
     }
     let mut tools = state.tools.lock().await;
     let purge = query.get("purge").map(String::as_str) == Some("true");
-    let result = if purge { tools.purge(&id) } else { tools.close(&id) };
+    let result = if purge {
+        tools.purge(&id)
+    } else {
+        tools.close(&id)
+    };
     match result {
         Ok(_) => AxumJson(json!({ "closed": id, "purged": purge })).into_response(),
         Err(e) => err_response(StatusCode::NOT_FOUND, &e.0),
@@ -437,7 +465,10 @@ async fn get_file(
     if !state.authorized(&headers, &query) {
         return unauthorized();
     }
-    let format = query.get("format").cloned().unwrap_or_else(|| "xlsx".to_string());
+    let format = query
+        .get("format")
+        .cloned()
+        .unwrap_or_else(|| "xlsx".to_string());
     let mut tools = state.tools.lock().await;
     match tools.export_bytes(&id, &format) {
         Ok(bytes) => {
@@ -558,14 +589,20 @@ async fn channel_loop(
         Ok(w) => w,
         Err(e) => {
             let _ = socket
-                .send(Message::Text(json!({ "type": "error", "error": e }).to_string().into()))
+                .send(Message::Text(
+                    json!({ "type": "error", "error": e }).to_string().into(),
+                ))
                 .await;
             return;
         }
     };
     let tx = state.channels.entry(&id);
     let mut rx = tx.subscribe();
-    if socket.send(Message::Text(welcome.to_string().into())).await.is_err() {
+    if socket
+        .send(Message::Text(welcome.to_string().into()))
+        .await
+        .is_err()
+    {
         return;
     }
     // Reconnect replay: stream the journal frames the client missed. A
@@ -577,7 +614,11 @@ async fn channel_loop(
             tools.frames_after(&id, after)
         };
         for frame in frames {
-            if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+            if socket
+                .send(Message::Text(frame.to_string().into()))
+                .await
+                .is_err()
+            {
                 return;
             }
         }
@@ -644,7 +685,9 @@ async fn handle_channel_message(
             let script = msg.get("script").and_then(Json::as_str).unwrap_or("");
             let cmd_id = msg.get("id").and_then(Json::as_str);
             if script.is_empty() {
-                return Some(json!({ "type": "rejected", "cmd_id": cmd_id, "error": "cmd needs a script" }));
+                return Some(
+                    json!({ "type": "rejected", "cmd_id": cmd_id, "error": "cmd needs a script" }),
+                );
             }
             let mut tools = state.tools.lock().await;
             match tools.exec(id, script, principal, cmd_id) {

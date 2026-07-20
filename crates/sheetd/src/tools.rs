@@ -227,7 +227,10 @@ impl Tools {
             return;
         };
         if let Ok(session) = self.manager.get_mut(id) {
-            session.history = Some(Box::new(JournalHistory { dir, id: id.to_string() }));
+            session.history = Some(Box::new(JournalHistory {
+                dir,
+                id: id.to_string(),
+            }));
         }
     }
 
@@ -279,9 +282,7 @@ impl Tools {
         let (book, origin) = match (path, new) {
             (Some(p), None) => (Book::open(p)?, Some(p.to_string())),
             (None, name) => (Book::new_empty(name.unwrap_or("workbook"))?, None),
-            (Some(_), Some(_)) => {
-                return Err(Error::from("pass either `path` or `new`, not both"))
-            }
+            (Some(_), Some(_)) => return Err(Error::from("pass either `path` or `new`, not both")),
         };
         self.admit(&book)?;
         let mut session = Session::new(book, origin.clone());
@@ -339,7 +340,13 @@ impl Tools {
 
     /// Replace an open workbook's content in place, keeping its id. This is
     /// a whole-book swap: replicas get a `resync` frame.
-    pub fn replace_bytes(&mut self, id: &str, format: &str, bytes: &[u8], principal: &str) -> Result<()> {
+    pub fn replace_bytes(
+        &mut self,
+        id: &str,
+        format: &str,
+        bytes: &[u8],
+        principal: &str,
+    ) -> Result<()> {
         let book = match format {
             "xlsx" => Book::from_xlsx_bytes(bytes, id)?,
             "csv" => Book::from_csv_str(
@@ -418,7 +425,11 @@ impl Tools {
         // A state change gets a sequence number and a journal entry;
         // read-only execs get neither.
         let changed = !out.delta.is_empty() || out.needs_resync;
-        let seq = if changed { self.next_seq(workbook_id) } else { 0 };
+        let seq = if changed {
+            self.next_seq(workbook_id)
+        } else {
+            0
+        };
 
         let event = ExecEvent {
             workbook_id: workbook_id.to_string(),
@@ -443,7 +454,10 @@ impl Tools {
             delta_total: out.delta.len(),
             diffs,
             resync: out.needs_resync,
-            error: out.failed.as_ref().map(|(line, _, err)| (*line, err.clone())),
+            error: out
+                .failed
+                .as_ref()
+                .map(|(line, _, err)| (*line, err.clone())),
         };
         let rendered = out.render(multi_sheet);
         if changed {
@@ -467,7 +481,10 @@ impl Tools {
         };
         let frame = applied_frame(event);
         if let Err(e) = store.append_frame(&event.workbook_id, &frame) {
-            eprintln!("sheetd: journal append failed for {}: {e}", event.workbook_id);
+            eprintln!(
+                "sheetd: journal append failed for {}: {e}",
+                event.workbook_id
+            );
         }
     }
 
@@ -501,10 +518,18 @@ impl Tools {
     /// `sheet_save {workbook_id, path?, overwrite?}`. With no path, saves back
     /// to where the workbook was opened from — a file write, or a Google
     /// Sheets push when the workbook was pulled from one.
-    pub fn save(&mut self, workbook_id: &str, path: Option<&str>, overwrite: bool) -> Result<String> {
+    pub fn save(
+        &mut self,
+        workbook_id: &str,
+        path: Option<&str>,
+        overwrite: bool,
+    ) -> Result<String> {
         let session = self.session(workbook_id)?;
         let origin_is_gsheets = path.is_none()
-            && session.origin.as_deref().is_some_and(|o| o.starts_with("gsheets:"));
+            && session
+                .origin
+                .as_deref()
+                .is_some_and(|o| o.starts_with("gsheets:"));
         if origin_is_gsheets {
             return self.save_gsheets(workbook_id);
         }
@@ -580,7 +605,8 @@ impl Tools {
     }
 
     pub fn purge(&mut self, workbook_id: &str) -> Result<String> {
-        let existed = self.manager.remove(workbook_id) || self.store.as_ref().is_some_and(|s| s.exists(workbook_id));
+        let existed = self.manager.remove(workbook_id)
+            || self.store.as_ref().is_some_and(|s| s.exists(workbook_id));
         self.last_access.remove(workbook_id);
         if let Some(store) = &self.store {
             store.delete(workbook_id, true)?;
@@ -604,12 +630,18 @@ impl Tools {
             "sheet_view" => {
                 let id = s("workbook_id").ok_or(Error::from("workbook_id is required"))?;
                 let target = s("target").ok_or(Error::from("target is required"))?;
-                let budget = args.get("budget_tokens").and_then(Json::as_u64).map(|b| b as usize);
+                let budget = args
+                    .get("budget_tokens")
+                    .and_then(Json::as_u64)
+                    .map(|b| b as usize);
                 self.view(id, target, s("mode"), budget)
             }
             "sheet_save" => {
                 let id = s("workbook_id").ok_or(Error::from("workbook_id is required"))?;
-                let overwrite = args.get("overwrite").and_then(Json::as_bool).unwrap_or(false);
+                let overwrite = args
+                    .get("overwrite")
+                    .and_then(Json::as_bool)
+                    .unwrap_or(false);
                 self.save(id, s("path"), overwrite)
             }
             "sheet_close" => {

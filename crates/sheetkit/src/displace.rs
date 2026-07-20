@@ -77,7 +77,11 @@ pub fn displace_rows(formula: &str, row_delta: i32) -> String {
                 let _ = col_abs;
 
                 if prev_ok && next_ok && (1..=3).contains(&col_len) && (1..=7).contains(&row_len) {
-                    let row: i64 = chars[row_start..j].iter().collect::<String>().parse().unwrap_or(0);
+                    let row: i64 = chars[row_start..j]
+                        .iter()
+                        .collect::<String>()
+                        .parse()
+                        .unwrap_or(0);
                     let new_row = if row_abs { row } else { row + row_delta as i64 };
                     if (1..=1_048_576).contains(&new_row) {
                         for &ch in &chars[start..row_start] {
@@ -132,7 +136,10 @@ mod tests {
 
     #[test]
     fn ignores_strings_and_functions() {
-        assert_eq!(displace_rows("=IF(A1>0,\"A1 ok\",B1)", 1), "=IF(A2>0,\"A1 ok\",B2)");
+        assert_eq!(
+            displace_rows("=IF(A1>0,\"A1 ok\",B1)", 1),
+            "=IF(A2>0,\"A1 ok\",B2)"
+        );
         assert_eq!(displace_rows("=LOG10(A1)", 1), "=LOG10(A2)");
     }
 

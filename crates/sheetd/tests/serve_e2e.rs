@@ -116,7 +116,10 @@ fn three_doors_one_session() {
         .unwrap();
     let id = created["workbook_id"].as_str().unwrap().to_string();
     assert!(id.starts_with("wb-"), "{id}");
-    assert!(created["sketch"].as_str().unwrap().contains("3 rows + header"));
+    assert!(created["sketch"]
+        .as_str()
+        .unwrap()
+        .contains("3 rows + header"));
 
     // -- MCP door works against the same workbook ----------------------------
     let mcp = |body: Json| -> Json {
@@ -136,10 +139,12 @@ fn three_doors_one_session() {
     let tools_list = mcp(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
     assert_eq!(tools_list["result"]["tools"].as_array().unwrap().len(), 5);
 
-    let exec = mcp(json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-        "name": "sheet_exec",
-        "arguments": { "workbook_id": id, "script": "set D1 Total\nset D2:D4 =B2*C2\nexpect D4 == 12" }
-    }}));
+    let exec = mcp(
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "sheet_exec",
+            "arguments": { "workbook_id": id, "script": "set D1 Total\nset D2:D4 =B2*C2\nexpect D4 == 12" }
+        }}),
+    );
     let text = exec["result"]["content"][0]["text"].as_str().unwrap();
     assert_eq!(exec["result"]["isError"], json!(false));
     assert!(text.contains("expect D4 == 12: OK"), "{text}");
@@ -153,7 +158,10 @@ fn three_doors_one_session() {
 
     // -- REST view + exec on the MCP-created column ---------------------------
     let view = server.get_json(&format!("/workbooks/{id}/view?target=A1:D4"));
-    assert!(view["view"].as_str().unwrap().contains("=B2*C2 ⇒ 7"), "{view}");
+    assert!(
+        view["view"].as_str().unwrap().contains("=B2*C2 ⇒ 7"),
+        "{view}"
+    );
 
     let exec2 = server.post_json(
         &format!("/workbooks/{id}/exec"),
@@ -185,7 +193,10 @@ fn three_doors_one_session() {
         .unwrap();
     assert_eq!(closed["closed"].as_str().unwrap(), id);
     let back = server.get_json(&format!("/workbooks/{id}"));
-    assert!(back["sketch"].as_str().unwrap().contains("Total"), "rehydrated: {back}");
+    assert!(
+        back["sketch"].as_str().unwrap().contains("Total"),
+        "rehydrated: {back}"
+    );
 }
 
 #[test]
@@ -227,7 +238,9 @@ fn channel_streams_applied_deltas() {
     // The exact engine version moves with the pin; replicas only need it
     // present and stable, so assert shape rather than value.
     assert!(
-        welcome["engine_version"].as_str().is_some_and(|v| !v.is_empty()),
+        welcome["engine_version"]
+            .as_str()
+            .is_some_and(|v| !v.is_empty()),
         "{welcome}"
     );
     let welcome2 = read_json(&mut watcher);
@@ -236,8 +249,7 @@ fn channel_streams_applied_deltas() {
     // The actor runs a command; both clients see the applied fan-out.
     actor
         .send(tungstenite::Message::Text(
-            json!({ "type": "cmd", "id": "c1", "script": "set C1 Sum\nset C2 =A2+B2" })
-                .to_string(),
+            json!({ "type": "cmd", "id": "c1", "script": "set C1 Sum\nset C2 =A2+B2" }).to_string(),
         ))
         .unwrap();
 
@@ -252,10 +264,15 @@ fn channel_streams_applied_deltas() {
                 assert!(msg["seq"].as_u64().unwrap() >= 1);
                 let delta = msg["delta"].as_array().unwrap();
                 assert!(
-                    delta.iter().any(|d| d[0].as_str().unwrap().ends_with("C2") && d[2] == "3"),
+                    delta
+                        .iter()
+                        .any(|d| d[0].as_str().unwrap().ends_with("C2") && d[2] == "3"),
                     "{msg}"
                 );
-                assert!(!msg["diffs_b64"].as_str().unwrap().is_empty(), "diff blob present");
+                assert!(
+                    !msg["diffs_b64"].as_str().unwrap().is_empty(),
+                    "diff blob present"
+                );
                 saw.1 = true;
             }
             "agent.status" if msg["phase"] == "idle" => {
@@ -291,8 +308,7 @@ fn channel_streams_applied_deltas() {
     // A failing script produces a rejected frame, not silence.
     actor
         .send(tungstenite::Message::Text(
-            json!({ "type": "cmd", "id": "c2", "script": "expect C2 == 999" })
-                .to_string(),
+            json!({ "type": "cmd", "id": "c2", "script": "expect C2 == 999" }).to_string(),
         ))
         .unwrap();
     let mut got_rejected = false;

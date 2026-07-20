@@ -100,16 +100,16 @@ impl Region {
 
     /// Find a column by header name (case-insensitive) or letter.
     pub fn column_by_key(&self, key: &str) -> Option<i32> {
-        if let Some(c) = self
-            .columns
-            .iter()
-            .find(|c| c.header.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(key)))
-        {
+        if let Some(c) = self.columns.iter().find(|c| {
+            c.header
+                .as_deref()
+                .is_some_and(|h| h.eq_ignore_ascii_case(key))
+        }) {
             return Some(c.col);
         }
-        crate::addr::column_to_number(&key.to_ascii_uppercase()).ok().filter(|c| {
-            *c >= self.range.start.col && *c <= self.range.end.col
-        })
+        crate::addr::column_to_number(&key.to_ascii_uppercase())
+            .ok()
+            .filter(|c| *c >= self.range.start.col && *c <= self.range.end.col)
     }
 }
 
@@ -270,7 +270,16 @@ fn analyze_region(book: &Book, sheet: u32, sheet_name: &str, name: String, range
 
     let mut columns = Vec::new();
     for col in range.start.col..=range.end.col {
-        columns.push(analyze_column(book, sheet, col, body_start, range.end.row, header_row, range, body_rows));
+        columns.push(analyze_column(
+            book,
+            sheet,
+            col,
+            body_start,
+            range.end.row,
+            header_row,
+            range,
+            body_rows,
+        ));
     }
 
     Region {
@@ -430,8 +439,10 @@ fn analyze_column(
                 .map(|(row, _)| *row)
         };
         (
-            min.and_then(find_row).map(|r| book.formatted_value(sheet, r, col)),
-            max.and_then(find_row).map(|r| book.formatted_value(sheet, r, col)),
+            min.and_then(find_row)
+                .map(|r| book.formatted_value(sheet, r, col)),
+            max.and_then(find_row)
+                .map(|r| book.formatted_value(sheet, r, col)),
         )
     } else {
         (min.map(format_number), max.map(format_number))
@@ -543,7 +554,12 @@ mod tests {
         })
         .unwrap();
         let regions = detect(&book, 0);
-        assert_eq!(regions.len(), 2, "{:?}", regions.iter().map(|r| r.range.a1()).collect::<Vec<_>>());
+        assert_eq!(
+            regions.len(),
+            2,
+            "{:?}",
+            regions.iter().map(|r| r.range.a1()).collect::<Vec<_>>()
+        );
         assert_eq!(regions[0].range.a1(), "A1:C5");
         assert_eq!(regions[1].range.a1(), "F2:G8");
     }

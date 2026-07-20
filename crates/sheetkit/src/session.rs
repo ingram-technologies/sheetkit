@@ -230,7 +230,9 @@ impl Manager {
             } else {
                 self.sessions.keys().cloned().collect::<Vec<_>>().join(", ")
             };
-            return Err(Error::from(format!("no open workbook {id:?} (open: {open})")));
+            return Err(Error::from(format!(
+                "no open workbook {id:?} (open: {open})"
+            )));
         }
         Ok(self.sessions.get_mut(id).unwrap())
     }

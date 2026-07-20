@@ -25,12 +25,18 @@ impl McpClient {
             .expect("spawn sheetd");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        McpClient { child, stdin, stdout, next_id: 0 }
+        McpClient {
+            child,
+            stdin,
+            stdout,
+            next_id: 0,
+        }
     }
 
     fn request(&mut self, method: &str, params: Json) -> Json {
         self.next_id += 1;
-        let msg = json!({ "jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params });
+        let msg =
+            json!({ "jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params });
         writeln!(self.stdin, "{msg}").unwrap();
         self.stdin.flush().unwrap();
         let mut line = String::new();
@@ -52,7 +58,10 @@ impl McpClient {
         let result = resp
             .get("result")
             .unwrap_or_else(|| panic!("tool call {name} returned protocol error: {resp}"));
-        let text = result["content"][0]["text"].as_str().unwrap_or("").to_string();
+        let text = result["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let is_error = result["isError"].as_bool().unwrap_or(false);
         (text, is_error)
     }
@@ -132,16 +141,31 @@ fn full_task_over_mcp() {
         .collect();
     assert_eq!(
         names,
-        vec!["sheet_open", "sheet_exec", "sheet_view", "sheet_save", "sheet_close"]
+        vec![
+            "sheet_open",
+            "sheet_exec",
+            "sheet_view",
+            "sheet_save",
+            "sheet_close"
+        ]
     );
 
     // -- open: the sketch must describe the data without any further reads --
     let (open_text, err) = mcp.call_tool("sheet_open", json!({ "path": input.to_str().unwrap() }));
     assert!(!err, "{open_text}");
     let id = extract_workbook_id(&open_text);
-    assert!(open_text.contains("Order"), "sketch names headers: {open_text}");
-    assert!(open_text.contains("200 rows + header"), "sketch counts rows: {open_text}");
-    assert!(open_text.contains("mixed"), "sketch flags the dirty Qty column: {open_text}");
+    assert!(
+        open_text.contains("Order"),
+        "sketch names headers: {open_text}"
+    );
+    assert!(
+        open_text.contains("200 rows + header"),
+        "sketch counts rows: {open_text}"
+    );
+    assert!(
+        open_text.contains("mixed"),
+        "sketch flags the dirty Qty column: {open_text}"
+    );
 
     // -- the task: clean, add a computed column, verify, sort ---------------
     let (fix_text, err) = mcp.call_tool(
@@ -154,8 +178,14 @@ fn full_task_over_mcp() {
     );
     assert!(!err, "{fix_text}");
     assert!(!fix_text.contains('✗'), "no line may fail: {fix_text}");
-    assert!(fix_text.contains("C150"), "find located the artifact: {fix_text}");
-    assert!(fix_text.contains("recalc:"), "delta echo present: {fix_text}");
+    assert!(
+        fix_text.contains("C150"),
+        "find located the artifact: {fix_text}"
+    );
+    assert!(
+        fix_text.contains("recalc:"),
+        "delta echo present: {fix_text}"
+    );
     assert!(fix_text.contains("expect E2 == 10.5: OK"), "{fix_text}");
     assert!(fix_text.contains("expect E201 == 99: OK"), "{fix_text}");
 
@@ -233,7 +263,10 @@ fn unknown_method_and_bad_tool() {
     assert!(err);
     assert!(text.contains("unknown tool"));
 
-    let (text, err) = mcp.call_tool("sheet_exec", json!({ "workbook_id": "wb99", "script": "sheets" }));
+    let (text, err) = mcp.call_tool(
+        "sheet_exec",
+        json!({ "workbook_id": "wb99", "script": "sheets" }),
+    );
     assert!(err);
     assert!(text.contains("no open workbook"), "{text}");
 }

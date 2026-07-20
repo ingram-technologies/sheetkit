@@ -78,7 +78,10 @@ pub fn fetch_spreadsheet(spreadsheet_id: &str) -> Result<Json> {
 pub fn fetch_sheet_properties(spreadsheet_id: &str) -> Result<Json> {
     let token = token()?;
     get(
-        &format!("{}/v4/spreadsheets/{spreadsheet_id}?fields={PROPS_FIELDS}", api_base()),
+        &format!(
+            "{}/v4/spreadsheets/{spreadsheet_id}?fields={PROPS_FIELDS}",
+            api_base()
+        ),
         &token,
     )
 }
@@ -86,7 +89,10 @@ pub fn fetch_sheet_properties(spreadsheet_id: &str) -> Result<Json> {
 /// Apply a batch of requests: one `spreadsheets.batchUpdate`.
 pub fn push_batch(spreadsheet_id: &str, requests: &[Json]) -> Result<Json> {
     let token = token()?;
-    let url = format!("{}/v4/spreadsheets/{spreadsheet_id}:batchUpdate", api_base());
+    let url = format!(
+        "{}/v4/spreadsheets/{spreadsheet_id}:batchUpdate",
+        api_base()
+    );
     let mut response = agent()
         .post(&url)
         .header("Authorization", &format!("Bearer {token}"))
@@ -114,7 +120,10 @@ fn describe_http_error(response: ureq::http::Response<ureq::Body>) -> Error {
     let body = response.into_body().read_to_string().unwrap_or_default();
     let detail = serde_json::from_str::<Json>(&body)
         .ok()
-        .and_then(|j| j.pointer("/error/message").and_then(|m| m.as_str().map(String::from)))
+        .and_then(|j| {
+            j.pointer("/error/message")
+                .and_then(|m| m.as_str().map(String::from))
+        })
         .unwrap_or_else(|| body.chars().take(200).collect());
     let hint = match code {
         401 => " (is GSHEETS_TOKEN expired?)",

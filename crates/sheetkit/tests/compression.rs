@@ -80,7 +80,12 @@ fn sparse_sheet_inverted_index() {
         for i in 0..300i32 {
             let row = (i * 37) % 950 + 1;
             let col = (i * 13) % 40 + 1;
-            b.set_input(0, row, col, ["alpha", "beta", "gamma", "42"][(i % 4) as usize])?;
+            b.set_input(
+                0,
+                row,
+                col,
+                ["alpha", "beta", "gamma", "42"][(i % 4) as usize],
+            )?;
         }
         Ok(())
     })
@@ -88,7 +93,15 @@ fn sparse_sheet_inverted_index() {
     let (regions, _) = detect_all(&book);
     let t = sheetkit::addr::parse_target("A1:AN950").unwrap();
     let resolved = book.resolve(&t, 0, &Default::default()).unwrap();
-    let v = render_view(&book, &resolved, &regions, ViewOptions { mode: Some(Mode::Sparse), budget_tokens: 800 });
+    let v = render_view(
+        &book,
+        &resolved,
+        &regions,
+        ViewOptions {
+            mode: Some(Mode::Sparse),
+            budget_tokens: 800,
+        },
+    );
     assert!(approx_tokens(&v) <= 800, "{} tokens", approx_tokens(&v));
     assert!(v.contains("non-empty of"), "{v}");
     assert!(v.contains("\"alpha\" —"), "{v}");

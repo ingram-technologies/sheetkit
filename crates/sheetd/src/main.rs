@@ -31,7 +31,9 @@ fn main() -> std::io::Result<()> {
             while let Some(arg) = it.next() {
                 match arg.as_str() {
                     "--addr" => opts.addr = expect_value(&mut it, "--addr")?,
-                    "--data-dir" => opts.data_dir = Some(expect_value(&mut it, "--data-dir")?.into()),
+                    "--data-dir" => {
+                        opts.data_dir = Some(expect_value(&mut it, "--data-dir")?.into())
+                    }
                     "--token" => opts.token = Some(expect_value(&mut it, "--token")?),
                     "--max-resident" => {
                         opts.max_resident = parse_num(&expect_value(&mut it, "--max-resident")?)?
@@ -66,12 +68,21 @@ fn main() -> std::io::Result<()> {
 
 fn parse_num(v: &str) -> std::io::Result<usize> {
     v.parse().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{v:?} is not a number"))
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{v:?} is not a number"),
+        )
     })
 }
 
-fn expect_value(it: &mut std::iter::Skip<std::slice::Iter<'_, String>>, flag: &str) -> std::io::Result<String> {
+fn expect_value(
+    it: &mut std::iter::Skip<std::slice::Iter<'_, String>>,
+    flag: &str,
+) -> std::io::Result<String> {
     it.next().cloned().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{flag} needs a value"))
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{flag} needs a value"),
+        )
     })
 }

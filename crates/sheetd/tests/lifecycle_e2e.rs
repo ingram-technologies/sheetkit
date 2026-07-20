@@ -170,7 +170,10 @@ fn channel_replays_missed_frames() {
     assert!(!f1["diffs_b64"].as_str().unwrap().is_empty());
     let f2 = read_json();
     assert_eq!(f2["seq"], 2);
-    assert!(f2["delta"].as_array().unwrap().iter().any(|d| d[2] == "3"), "{f2}");
+    assert!(
+        f2["delta"].as_array().unwrap().iter().any(|d| d[2] == "3"),
+        "{f2}"
+    );
 }
 
 /// Oversized imports are rejected with a useful message, not accepted as a
@@ -196,7 +199,10 @@ fn admission_control_rejects_oversized() {
     match resp {
         Ok(r) if r.status().as_u16() == 422 => {
             let body: Json = r.into_body().read_json().unwrap();
-            assert!(body["error"].as_str().unwrap().contains("limit of 10"), "{body}");
+            assert!(
+                body["error"].as_str().unwrap().contains("limit of 10"),
+                "{body}"
+            );
         }
         other => panic!("expected 422, got {other:?}"),
     }
@@ -215,7 +221,10 @@ fn purge_removes_blobs() {
         .header("Authorization", &format!("Bearer {TOKEN}"))
         .call()
         .unwrap();
-    assert!(server.get(&format!("/workbooks/{id}")).is_ok(), "rehydrates after close");
+    assert!(
+        server.get(&format!("/workbooks/{id}")).is_ok(),
+        "rehydrates after close"
+    );
 
     // Purge: gone for real, files removed.
     ureq::delete(&server.url(&format!("/workbooks/{id}?purge=true")))

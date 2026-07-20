@@ -5,8 +5,8 @@
 //! spill semantics our delta/view layers rely on.
 
 use sheetkit::book::Book;
-use sheetkit::cmd::exec;
 use sheetkit::book::Value;
+use sheetkit::cmd::exec;
 use sheetkit::delta::render;
 use sheetkit::session::Session;
 
@@ -32,9 +32,12 @@ fn seeded() -> Book {
 #[test]
 fn modern_functions_evaluate() {
     let mut book = seeded();
-    book.set_input(0, 1, 4, "=SUMPRODUCT((A2:A5=\"apple\")*B2:B5)").unwrap();
-    book.set_input(0, 2, 4, "=LET(x, SUM(B2:B5), x * 2)").unwrap();
-    book.set_input(0, 3, 4, "=TEXTJOIN(\",\", TRUE, A2:A3)").unwrap();
+    book.set_input(0, 1, 4, "=SUMPRODUCT((A2:A5=\"apple\")*B2:B5)")
+        .unwrap();
+    book.set_input(0, 2, 4, "=LET(x, SUM(B2:B5), x * 2)")
+        .unwrap();
+    book.set_input(0, 3, 4, "=TEXTJOIN(\",\", TRUE, A2:A3)")
+        .unwrap();
     book.evaluate();
     assert_eq!(book.value(0, 1, 4), Value::Number(6.0));
     assert_eq!(book.value(0, 2, 4), Value::Number(36.0));
@@ -51,8 +54,14 @@ fn dynamic_arrays_spill() {
     assert_eq!(book.value(0, 1, 6), Value::Text("apple".into()));
     assert_eq!(book.value(0, 2, 6), Value::Text("pear".into()));
     assert_eq!(book.value(0, 3, 6), Value::Text("plum".into()));
-    assert!(book.formula(0, 1, 6).unwrap().is_some(), "anchor keeps its formula");
-    assert!(book.formula(0, 2, 6).unwrap().is_none(), "spill cells are not formulas");
+    assert!(
+        book.formula(0, 1, 6).unwrap().is_some(),
+        "anchor keeps its formula"
+    );
+    assert!(
+        book.formula(0, 2, 6).unwrap().is_none(),
+        "spill cells are not formulas"
+    );
 }
 
 /// The delta echo reports every spilled cell, not just the anchor the script

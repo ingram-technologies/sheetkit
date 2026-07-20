@@ -141,7 +141,12 @@ impl McpClient {
             .expect("spawn sheetd");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
-        McpClient { child, stdin, stdout, next_id: 0 }
+        McpClient {
+            child,
+            stdin,
+            stdout,
+            next_id: 0,
+        }
     }
 
     fn call_tool(&mut self, name: &str, args: Json) -> (String, bool) {
@@ -155,7 +160,10 @@ impl McpClient {
         let resp: Json = serde_json::from_str(&line).expect("valid JSON");
         let result = &resp["result"];
         (
-            result["content"][0]["text"].as_str().unwrap_or("").to_string(),
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             result["isError"].as_bool().unwrap_or(false),
         )
     }
@@ -189,8 +197,14 @@ fn pull_edit_push_roundtrip() {
         json!({ "path": "https://docs.google.com/spreadsheets/d/TESTID/edit#gid=0" }),
     );
     assert!(!err, "{open_text}");
-    assert!(open_text.contains("from Google Sheets TESTID"), "{open_text}");
-    assert!(open_text.contains("Item"), "sketch has headers: {open_text}");
+    assert!(
+        open_text.contains("from Google Sheets TESTID"),
+        "{open_text}"
+    );
+    assert!(
+        open_text.contains("Item"),
+        "sketch has headers: {open_text}"
+    );
     let id = open_text.split_whitespace().nth(1).unwrap().to_string();
 
     // -- edit locally: computed column + a clear ---------------------------------
@@ -259,7 +273,10 @@ fn pull_edit_push_roundtrip() {
     assert!(!err, "{save3}");
     assert!(save3.contains("pushed 1 changed cell "), "{save3}");
     let cap = captured.lock().unwrap();
-    let last = cap.batch_updates.last().unwrap()["requests"].as_array().unwrap().clone();
+    let last = cap.batch_updates.last().unwrap()["requests"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(last.len(), 1, "{last:?}");
     assert_eq!(
         last[0].pointer("/updateCells/rows/0/values/0/userEnteredValue/numberValue"),

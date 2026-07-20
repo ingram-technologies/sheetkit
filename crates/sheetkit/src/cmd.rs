@@ -120,7 +120,12 @@ fn strip_comment(line: &str) -> &str {
     line
 }
 
-fn run_line(session: &mut Session, line: &str, author: &str, warnings: &mut Vec<String>) -> Result<String> {
+fn run_line(
+    session: &mut Session,
+    line: &str,
+    author: &str,
+    warnings: &mut Vec<String>,
+) -> Result<String> {
     let (verb, rest) = split_word(line);
     let verb_lc = verb.to_ascii_lowercase();
     match verb_lc.as_str() {
@@ -291,7 +296,11 @@ fn cmd_sheets(session: &mut Session) -> Result<String> {
                 .used_range(i as u32)
                 .map(|r| format!("used {}", r.a1()))
                 .unwrap_or_else(|| "empty".to_string());
-            format!("{}{} — {used}", if i == current { "* " } else { "  " }, display_sheet(n))
+            format!(
+                "{}{} — {used}",
+                if i == current { "* " } else { "  " },
+                display_sheet(n)
+            )
         })
         .collect();
     Ok(lines.join("\n"))
@@ -318,7 +327,11 @@ fn cmd_regions(session: &mut Session) -> Result<String> {
                 r.range.a1(),
                 r.body_rows(),
                 if r.body_rows() == 1 { "" } else { "s" },
-                if r.header_row.is_some() { " + header" } else { "" },
+                if r.header_row.is_some() {
+                    " + header"
+                } else {
+                    ""
+                },
             )
         })
         .collect();
@@ -343,7 +356,9 @@ fn cmd_view(session: &mut Session, rest: &str) -> Result<String> {
                 other => return Err(Error::from(format!("unknown mode {other:?}"))),
             });
         } else if let Some(v) = t.strip_prefix("budget=") {
-            opts.budget_tokens = v.parse().map_err(|_| Error::from(format!("bad budget {v:?}")))?;
+            opts.budget_tokens = v
+                .parse()
+                .map_err(|_| Error::from(format!("bad budget {v:?}")))?;
         } else {
             target_parts.push(t);
         }
@@ -437,7 +452,11 @@ fn cmd_set(session: &mut Session, rest: &str) -> Result<String> {
     } else {
         ""
     };
-    Ok(format!("set {} ({} cells){note}", range.a1(), range.cell_count()))
+    Ok(format!(
+        "set {} ({} cells){note}",
+        range.a1(),
+        range.cell_count()
+    ))
 }
 
 /// Split `a, b, "c,d", e` on top-level commas.
@@ -475,7 +494,9 @@ fn cmd_fill(session: &mut Session, rest: &str) -> Result<String> {
     let src = session.resolve(parts[0])?;
     let dst = session.resolve(parts[1])?;
     if src.sheet_index != dst.sheet_index {
-        return Err(Error::from("fill source and target must be on the same sheet"));
+        return Err(Error::from(
+            "fill source and target must be on the same sheet",
+        ));
     }
     let sheet = src.sheet_index;
     let (s, d) = (src.range, dst.range);
@@ -491,7 +512,11 @@ fn cmd_fill(session: &mut Session, rest: &str) -> Result<String> {
             Ok(format!(
                 "filled {}:{} from {}",
                 s.start.a1(),
-                CellRef { row: d.end.row, col: s.end.col }.a1(),
+                CellRef {
+                    row: d.end.row,
+                    col: s.end.col
+                }
+                .a1(),
                 s.a1()
             ))
         }
@@ -501,7 +526,11 @@ fn cmd_fill(session: &mut Session, rest: &str) -> Result<String> {
             Ok(format!(
                 "filled {}:{} from {}",
                 s.start.a1(),
-                CellRef { row: s.end.row, col: d.end.col }.a1(),
+                CellRef {
+                    row: s.end.row,
+                    col: d.end.col
+                }
+                .a1(),
                 s.a1()
             ))
         }
@@ -700,11 +729,13 @@ fn cmd_sort(session: &mut Session, rest: &str, warnings: &mut Vec<String>) -> Re
         let key_name = name_tokens.join(" ");
         let col = match region.and_then(|r| r.column_by_key(&key_name)) {
             Some(c) => c,
-            None => crate::addr::column_to_number(&key_name.to_ascii_uppercase()).map_err(|_| {
-                Error::from(format!(
-                    "sort key {key_name:?} is neither a header nor a column letter"
-                ))
-            })?,
+            None => {
+                crate::addr::column_to_number(&key_name.to_ascii_uppercase()).map_err(|_| {
+                    Error::from(format!(
+                        "sort key {key_name:?} is neither a header nor a column letter"
+                    ))
+                })?
+            }
         };
         if col < range.start.col || col > range.end.col {
             return Err(Error::from(format!(
@@ -912,7 +943,11 @@ fn cmd_find(session: &mut Session, rest: &str) -> Result<String> {
                 total += 1;
                 if hits.len() < CAP {
                     let addr = if multi_sheet {
-                        format!("{}!{}", display_sheet(&sheet_name), CellRef { row, col }.a1())
+                        format!(
+                            "{}!{}",
+                            display_sheet(&sheet_name),
+                            CellRef { row, col }.a1()
+                        )
                     } else {
                         CellRef { row, col }.a1()
                     };
@@ -936,7 +971,10 @@ fn cmd_find(session: &mut Session, rest: &str) -> Result<String> {
     let mut out = format!("{total} match{}:\n", if total == 1 { "" } else { "es" });
     out.push_str(&hits.join("\n"));
     if total > CAP {
-        out.push_str(&format!("\n… {} more (narrow with `in <range>`)", total - CAP));
+        out.push_str(&format!(
+            "\n… {} more (narrow with `in <range>`)",
+            total - CAP
+        ));
     }
     Ok(out)
 }
@@ -1188,7 +1226,9 @@ fn value_equals(actual: &Value, expected: &str) -> bool {
 fn cmd_highlight(session: &mut Session, rest: &str, author: &str) -> Result<String> {
     let mut tokens = tokenize(rest);
     if tokens.is_empty() {
-        return Err(Error::from("usage: highlight <range> [color=<c>] [note=\"…\"]"));
+        return Err(Error::from(
+            "usage: highlight <range> [color=<c>] [note=\"…\"]",
+        ));
     }
     let mut color = "amber".to_string();
     let mut note: Option<String> = None;
@@ -1236,7 +1276,10 @@ fn cmd_highlights(session: &mut Session) -> Result<String> {
                 h.range.a1(),
                 h.color,
                 h.author,
-                h.note.as_ref().map(|n| format!(" — {n:?}")).unwrap_or_default()
+                h.note
+                    .as_ref()
+                    .map(|n| format!(" — {n:?}"))
+                    .unwrap_or_default()
             )
         })
         .collect();
@@ -1297,7 +1340,10 @@ mod tests {
     #[test]
     fn sort_by_header_reanchors_formulas() {
         let mut s = orders_session();
-        let out = run(&mut s, "set D1 Total\nset D2:D4 =B2*C2\nsort table1 by Price desc");
+        let out = run(
+            &mut s,
+            "set D1 Total\nset D2:D4 =B2*C2\nsort table1 by Price desc",
+        );
         assert!(out.ok(), "{:?}", out.failed);
         // Price desc: Cat(12), Ape(3.5), Bee(0.4)
         assert_eq!(s.book.value(0, 2, 1), Value::Text("Cat".into()));
@@ -1334,7 +1380,10 @@ mod tests {
     #[test]
     fn checkpoint_restore_undo() {
         let mut s = orders_session();
-        let out = run(&mut s, "checkpoint start\nset B2 1000\nrestore start\nexpect B2 == 10");
+        let out = run(
+            &mut s,
+            "checkpoint start\nset B2 1000\nrestore start\nexpect B2 == 10",
+        );
         assert!(out.ok(), "{:?}", out.failed);
         // The delta nets out to nothing: set then restore.
         assert!(out.delta.is_empty(), "{:?}", out.delta);
@@ -1366,7 +1415,11 @@ mod tests {
         assert!(out.ok(), "{:?}", out.failed);
         let out = run(&mut s, "view orders");
         assert!(out.ok(), "{:?}", out.failed);
-        assert!(out.results[0].contains("Sheet1!A1:C4"), "{}", out.results[0]);
+        assert!(
+            out.results[0].contains("Sheet1!A1:C4"),
+            "{}",
+            out.results[0]
+        );
     }
 
     #[test]
@@ -1429,7 +1482,10 @@ mod tests {
     #[test]
     fn restore_flags_resync() {
         let mut s = orders_session();
-        let out = run(&mut s, "checkpoint a\nset B2 77\nrestore a\nexpect B2 == 10");
+        let out = run(
+            &mut s,
+            "checkpoint a\nset B2 77\nrestore a\nexpect B2 == 10",
+        );
         assert!(out.ok(), "{:?}", out.failed);
         assert!(out.needs_resync);
     }

@@ -21,7 +21,11 @@ pub struct CellRef {
 
 impl CellRef {
     pub fn a1(&self) -> String {
-        format!("{}{}", number_to_column(self.col).unwrap_or_default(), self.row)
+        format!(
+            "{}{}",
+            number_to_column(self.col).unwrap_or_default(),
+            self.row
+        )
     }
 }
 
@@ -39,8 +43,14 @@ impl Range {
 
     pub fn new(a: CellRef, b: CellRef) -> Range {
         Range {
-            start: CellRef { row: a.row.min(b.row), col: a.col.min(b.col) },
-            end: CellRef { row: a.row.max(b.row), col: a.col.max(b.col) },
+            start: CellRef {
+                row: a.row.min(b.row),
+                col: a.col.min(b.col),
+            },
+            end: CellRef {
+                row: a.row.max(b.row),
+                col: a.col.max(b.col),
+            },
         }
     }
 
@@ -84,9 +94,15 @@ impl fmt::Display for Range {
 pub enum TargetKind {
     Range(Range),
     /// Whole columns, e.g. `C` or `C:E`.
-    Cols { start: i32, end: i32 },
+    Cols {
+        start: i32,
+        end: i32,
+    },
     /// Whole rows, e.g. `5:20`.
-    Rows { start: i32, end: i32 },
+    Rows {
+        start: i32,
+        end: i32,
+    },
     /// A bare identifier: region name, defined name, or sheet name.
     Ident(String),
 }
@@ -169,7 +185,10 @@ pub fn parse_target(input: &str) -> Option<Target> {
         return Some(Target { sheet, kind });
     }
     if sheet.is_none() && is_ident(rest) {
-        return Some(Target { sheet: None, kind: TargetKind::Ident(rest.to_string()) });
+        return Some(Target {
+            sheet: None,
+            kind: TargetKind::Ident(rest.to_string()),
+        });
     }
     // `Sheet1` alone parses as a sheet target via Ident; `Sheet1!foo` is invalid.
     None
@@ -186,12 +205,14 @@ fn parse_range_str(s: &str) -> Option<TargetKind> {
             let (a, b) = (parse_endpoint(a)?, parse_endpoint(b)?);
             match (a, b) {
                 (Endpoint::Cell(a), Endpoint::Cell(b)) => Some(TargetKind::Range(Range::new(a, b))),
-                (Endpoint::Col(a), Endpoint::Col(b)) => {
-                    Some(TargetKind::Cols { start: a.min(b), end: a.max(b) })
-                }
-                (Endpoint::Row(a), Endpoint::Row(b)) => {
-                    Some(TargetKind::Rows { start: a.min(b), end: a.max(b) })
-                }
+                (Endpoint::Col(a), Endpoint::Col(b)) => Some(TargetKind::Cols {
+                    start: a.min(b),
+                    end: a.max(b),
+                }),
+                (Endpoint::Row(a), Endpoint::Row(b)) => Some(TargetKind::Rows {
+                    start: a.min(b),
+                    end: a.max(b),
+                }),
                 _ => None,
             }
         }
@@ -200,8 +221,11 @@ fn parse_range_str(s: &str) -> Option<TargetKind> {
 
 pub fn is_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
-        && s.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ' ')
+        && s.chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ' ')
 }
 
 /// Quote a sheet name for display when it needs it.
@@ -231,7 +255,10 @@ mod tests {
     #[test]
     fn range_normalizes() {
         let t = parse_target("C10:A1").unwrap();
-        assert_eq!(t.kind, TargetKind::Range(Range::new(cell(1, 1), cell(10, 3))));
+        assert_eq!(
+            t.kind,
+            TargetKind::Range(Range::new(cell(1, 1), cell(10, 3)))
+        );
     }
 
     #[test]
@@ -244,16 +271,31 @@ mod tests {
 
     #[test]
     fn columns_and_rows() {
-        assert_eq!(parse_target("C").unwrap().kind, TargetKind::Cols { start: 3, end: 3 });
-        assert_eq!(parse_target("C:E").unwrap().kind, TargetKind::Cols { start: 3, end: 5 });
-        assert_eq!(parse_target("5:20").unwrap().kind, TargetKind::Rows { start: 5, end: 20 });
+        assert_eq!(
+            parse_target("C").unwrap().kind,
+            TargetKind::Cols { start: 3, end: 3 }
+        );
+        assert_eq!(
+            parse_target("C:E").unwrap().kind,
+            TargetKind::Cols { start: 3, end: 5 }
+        );
+        assert_eq!(
+            parse_target("5:20").unwrap().kind,
+            TargetKind::Rows { start: 5, end: 20 }
+        );
     }
 
     #[test]
     fn idents() {
-        assert_eq!(parse_target("orders").unwrap().kind, TargetKind::Ident("orders".into()));
+        assert_eq!(
+            parse_target("orders").unwrap().kind,
+            TargetKind::Ident("orders".into())
+        );
         // `A1` wins over ident interpretation
-        assert!(matches!(parse_target("A1").unwrap().kind, TargetKind::Range(_)));
+        assert!(matches!(
+            parse_target("A1").unwrap().kind,
+            TargetKind::Range(_)
+        ));
     }
 
     #[test]

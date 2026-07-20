@@ -124,12 +124,24 @@ pub fn import(spreadsheet_id: &str, response: &Json) -> Result<Import> {
         // (row, col, input, date_fmt) collected first, applied in one batch.
         let mut inputs: Vec<(i32, i32, String)> = Vec::new();
         let mut date_fmts: Vec<(i32, i32, String)> = Vec::new();
-        for grid in sheet.get("data").and_then(Json::as_array).unwrap_or(&vec![]) {
+        for grid in sheet
+            .get("data")
+            .and_then(Json::as_array)
+            .unwrap_or(&vec![])
+        {
             let start_row = grid.get("startRow").and_then(Json::as_i64).unwrap_or(0) as i32;
             let start_col = grid.get("startColumn").and_then(Json::as_i64).unwrap_or(0) as i32;
-            let row_data = grid.get("rowData").and_then(Json::as_array).cloned().unwrap_or_default();
+            let row_data = grid
+                .get("rowData")
+                .and_then(Json::as_array)
+                .cloned()
+                .unwrap_or_default();
             for (r, row) in row_data.iter().enumerate() {
-                let values = row.get("values").and_then(Json::as_array).cloned().unwrap_or_default();
+                let values = row
+                    .get("values")
+                    .and_then(Json::as_array)
+                    .cloned()
+                    .unwrap_or_default();
                 for (c, cell) in values.iter().enumerate() {
                     let Some(entered) = cell.get("userEnteredValue") else {
                         continue;
@@ -184,7 +196,11 @@ pub fn import(spreadsheet_id: &str, response: &Json) -> Result<Import> {
     }
 
     baseline.contents = snapshot_contents(&book);
-    Ok(Import { book, baseline, warnings })
+    Ok(Import {
+        book,
+        baseline,
+        warnings,
+    })
 }
 
 /// Convert an ExtendedValue into engine input text.
@@ -278,7 +294,10 @@ pub struct Push {
 
 /// One changed cell, classified for the wire.
 enum CellWrite {
-    Set { value: Json, date_fmt: Option<String> },
+    Set {
+        value: Json,
+        date_fmt: Option<String>,
+    },
     Clear,
 }
 
@@ -291,7 +310,10 @@ pub fn push_requests(book: &Book, baseline: &Baseline) -> Result<Push> {
 
     // Remote sheets that vanished locally are left alone, loudly.
     for meta in &baseline.sheets {
-        if !local_sheets.iter().any(|n| n.eq_ignore_ascii_case(&meta.title)) {
+        if !local_sheets
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(&meta.title))
+        {
             warnings.push(format!(
                 "sheet {:?} exists remotely but not locally; it was NOT deleted remotely (delete it by hand if intended)",
                 meta.title
@@ -300,7 +322,12 @@ pub fn push_requests(book: &Book, baseline: &Baseline) -> Result<Push> {
     }
 
     // Sheet id allocation for new local sheets.
-    let max_remote_id = baseline.sheets.iter().map(|s| s.sheet_id).max().unwrap_or(0);
+    let max_remote_id = baseline
+        .sheets
+        .iter()
+        .map(|s| s.sheet_id)
+        .max()
+        .unwrap_or(0);
     let mut next_new_id = max_remote_id + 1001;
 
     let mut changed_cells = 0usize;
@@ -327,8 +354,7 @@ pub fn push_requests(book: &Book, baseline: &Baseline) -> Result<Push> {
             }
         }
         for (s, row, col) in baseline.contents.keys() {
-            if s.eq_ignore_ascii_case(sheet_name)
-                && !current.contains_key(&(s.clone(), *row, *col))
+            if s.eq_ignore_ascii_case(sheet_name) && !current.contains_key(&(s.clone(), *row, *col))
             {
                 writes.insert((*row, *col), CellWrite::Clear);
             }
@@ -381,7 +407,11 @@ pub fn push_requests(book: &Book, baseline: &Baseline) -> Result<Push> {
         requests.extend(writes_to_requests(sheet_id, writes));
     }
 
-    Ok(Push { requests, changed_cells, warnings })
+    Ok(Push {
+        requests,
+        changed_cells,
+        warnings,
+    })
 }
 
 fn cell_write(book: &Book, sheet: u32, row: i32, col: i32, content: &str) -> CellWrite {
@@ -402,8 +432,14 @@ fn cell_write(book: &Book, sheet: u32, row: i32, col: i32, content: &str) -> Cel
                 date_fmt: is_date.then_some(fmt),
             }
         }
-        Value::Bool(b) => CellWrite::Set { value: json!({ "boolValue": b }), date_fmt: None },
-        Value::Error(e) => CellWrite::Set { value: json!({ "stringValue": e }), date_fmt: None },
+        Value::Bool(b) => CellWrite::Set {
+            value: json!({ "boolValue": b }),
+            date_fmt: None,
+        },
+        Value::Error(e) => CellWrite::Set {
+            value: json!({ "stringValue": e }),
+            date_fmt: None,
+        },
         Value::Text(_) | Value::Empty => CellWrite::Set {
             // The raw text, not Value::Text — content strips the quote prefix.
             value: json!({ "stringValue": content.strip_prefix('\'').unwrap_or(content) }),
@@ -424,7 +460,13 @@ fn writes_to_requests(sheet_id: i64, writes: HashMap<(i32, i32), CellWrite>) -> 
     while i < keys.len() {
         let (row, start_col) = keys[i];
         let run_has_fmt = |k: &(i32, i32)| {
-            matches!(writes.get(k), Some(CellWrite::Set { date_fmt: Some(_), .. }))
+            matches!(
+                writes.get(k),
+                Some(CellWrite::Set {
+                    date_fmt: Some(_),
+                    ..
+                })
+            )
         };
         let with_fmt = run_has_fmt(&keys[i]);
         let mut j = i;
@@ -497,10 +539,16 @@ pub fn apply_push_to_baseline(baseline: &mut Baseline, requests: &[Json], book: 
         if let Some(props) = req.pointer("/updateSheetProperties/properties") {
             let id = props.get("sheetId").and_then(Json::as_i64).unwrap_or(-1);
             if let Some(meta) = baseline.sheets.iter_mut().find(|m| m.sheet_id == id) {
-                if let Some(r) = props.pointer("/gridProperties/rowCount").and_then(Json::as_i64) {
+                if let Some(r) = props
+                    .pointer("/gridProperties/rowCount")
+                    .and_then(Json::as_i64)
+                {
                     meta.row_count = r as i32;
                 }
-                if let Some(c) = props.pointer("/gridProperties/columnCount").and_then(Json::as_i64) {
+                if let Some(c) = props
+                    .pointer("/gridProperties/columnCount")
+                    .and_then(Json::as_i64)
+                {
                     meta.column_count = c as i32;
                 }
             }
@@ -607,7 +655,10 @@ mod tests {
             parse_spreadsheet_id("https://docs.google.com/spreadsheets/d/1AbC-x_9/edit#gid=0"),
             Some("1AbC-x_9".to_string())
         );
-        assert_eq!(parse_spreadsheet_id("gsheets:zzz9"), Some("zzz9".to_string()));
+        assert_eq!(
+            parse_spreadsheet_id("gsheets:zzz9"),
+            Some("zzz9".to_string())
+        );
         assert_eq!(parse_spreadsheet_id("/tmp/books/file.xlsx"), None);
         assert_eq!(parse_spreadsheet_id("orders.csv"), None);
     }
@@ -632,8 +683,15 @@ mod tests {
         assert_eq!(b.value(1, 5, 2), Value::Text("hello".into()));
         // Baseline captured.
         assert_eq!(imp.baseline.sheets.len(), 2);
-        assert_eq!(imp.baseline.contents.get(&("Orders".into(), 2, 4)).unwrap(), "=B2*10");
-        assert!(imp.warnings.iter().any(|w| w.contains("error value")), "{:?}", imp.warnings);
+        assert_eq!(
+            imp.baseline.contents.get(&("Orders".into(), 2, 4)).unwrap(),
+            "=B2*10"
+        );
+        assert!(
+            imp.warnings.iter().any(|w| w.contains("error value")),
+            "{:?}",
+            imp.warnings
+        );
     }
 
     #[test]
@@ -651,26 +709,41 @@ mod tests {
         b.set_input(0, 2, 2, "5").unwrap(); // change Qty
         b.set_input(0, 4, 1, "Bee").unwrap(); // new row, two consecutive cells
         b.set_input(0, 4, 2, "3").unwrap();
-        b.clear_contents(0, Range::cell(CellRef { row: 3, col: 1 })).unwrap(); // clear "007"
+        b.clear_contents(0, Range::cell(CellRef { row: 3, col: 1 }))
+            .unwrap(); // clear "007"
 
         let push = push_requests(b, &imp.baseline).unwrap();
         // B2 changed + A4:B4 new + A3 cleared + D2 recalc does NOT count
         // (=B2*10 content unchanged).
         assert_eq!(push.changed_cells, 4, "{:?}", push.requests);
 
-        let updates: Vec<&Json> = push.requests.iter().filter(|r| r.get("updateCells").is_some()).collect();
+        let updates: Vec<&Json> = push
+            .requests
+            .iter()
+            .filter(|r| r.get("updateCells").is_some())
+            .collect();
         // A4:B4 grouped into one run.
         let run = updates
             .iter()
             .find(|r| r.pointer("/updateCells/start/rowIndex") == Some(&json!(3)))
             .expect("A4 run");
-        assert_eq!(run.pointer("/updateCells/rows/0/values").unwrap().as_array().unwrap().len(), 2);
+        assert_eq!(
+            run.pointer("/updateCells/rows/0/values")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         // The clear is an empty CellData under a userEnteredValue mask.
         let clear = updates
             .iter()
             .find(|r| r.pointer("/updateCells/start/rowIndex") == Some(&json!(2)))
             .expect("clear run");
-        assert_eq!(clear.pointer("/updateCells/rows/0/values/0").unwrap(), &json!({}));
+        assert_eq!(
+            clear.pointer("/updateCells/rows/0/values/0").unwrap(),
+            &json!({})
+        );
         assert_eq!(
             clear.pointer("/updateCells/fields").unwrap(),
             &json!("userEnteredValue")
@@ -691,14 +764,19 @@ mod tests {
             .iter()
             .find(|r| r.get("addSheet").is_some())
             .expect("addSheet request");
-        assert_eq!(add.pointer("/addSheet/properties/title").unwrap(), &json!("Summary"));
+        assert_eq!(
+            add.pointer("/addSheet/properties/title").unwrap(),
+            &json!("Summary")
+        );
         let resize = push
             .requests
             .iter()
             .find(|r| r.get("updateSheetProperties").is_some())
             .expect("grid resize");
         assert_eq!(
-            resize.pointer("/updateSheetProperties/properties/gridProperties/rowCount").unwrap(),
+            resize
+                .pointer("/updateSheetProperties/properties/gridProperties/rowCount")
+                .unwrap(),
             &json!(1200)
         );
     }

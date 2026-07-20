@@ -24,7 +24,11 @@ pub struct CellChange {
 
 impl CellChange {
     pub fn addr(&self) -> String {
-        CellRef { row: self.row, col: self.col }.a1()
+        CellRef {
+            row: self.row,
+            col: self.col,
+        }
+        .a1()
     }
 }
 
@@ -73,10 +77,7 @@ pub fn diff(before: &Snapshot, book: &Book) -> Delta {
 
     let shared = book.shared_strings();
     for sheet in 0..book.sheet_count() {
-        let sheet_name = sheet_names
-            .get(sheet as usize)
-            .cloned()
-            .unwrap_or_default();
+        let sheet_name = sheet_names.get(sheet as usize).cloned().unwrap_or_default();
         book.for_each_cell(sheet, |row, col, cell| {
             let new = cell_to_value(cell, shared);
             if new.is_empty() {
@@ -149,11 +150,17 @@ pub fn render(delta: &Delta, multi_sheet: bool, max_lines: usize) -> String {
         parts.join(" · ")
     );
     if delta.len() > max_lines {
-        out.push_str(&format!("\n  … {} more (use `view` to inspect)", delta.len() - max_lines));
+        out.push_str(&format!(
+            "\n  … {} more (use `view` to inspect)",
+            delta.len() - max_lines
+        ));
     }
     let errors = delta.new_errors();
     if errors > 0 {
-        out.push_str(&format!("\n  ⚠ {errors} new error{}", if errors == 1 { "" } else { "s" }));
+        out.push_str(&format!(
+            "\n  ⚠ {errors} new error{}",
+            if errors == 1 { "" } else { "s" }
+        ));
     }
     out
 }
