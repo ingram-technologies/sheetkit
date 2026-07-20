@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/sheetkit", "crates/sheetd"]
+members = ["crates/sheetkit", "crates/sheetd", "crates/sheetkit-wasm"]
 resolver = "2"
 
 [workspace.package]

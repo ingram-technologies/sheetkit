@@ -3,3 +3,4 @@ target/
 !tests/fixtures/*.xlsx
 # Windows NTFS alternate-data-stream droppings (WSL exposes them as files)
 *:Zone.Identifier
+/crates/sheetkit-wasm/pkg*/

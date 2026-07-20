@@ -2,8 +2,10 @@
 //! inspection helpers the rest of the toolkit builds on.
 
 use std::collections::HashMap;
+#[cfg(feature = "xlsx")]
 use std::path::Path;
 
+#[cfg(feature = "xlsx")]
 use ironcalc::{export, import};
 use ironcalc_base::cell::CellValue;
 use ironcalc_base::expressions::types::Area;
@@ -134,6 +136,7 @@ impl Book {
     }
 
     /// Import a workbook from xlsx bytes (no file needed).
+    #[cfg(feature = "xlsx")]
     pub fn from_xlsx_bytes(bytes: &[u8], name: &str) -> Result<Book> {
         let workbook = import::load_from_xlsx_bytes(bytes, name, LOCALE, TIMEZONE)
             .map_err(|e| Error::from(format!("failed to read xlsx bytes: {e}")))?;
@@ -145,6 +148,7 @@ impl Book {
     }
 
     /// Export the workbook as xlsx bytes.
+    #[cfg(feature = "xlsx")]
     pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>> {
         let cursor = std::io::Cursor::new(Vec::new());
         let out = export::save_xlsx_to_writer(self.um.get_model(), cursor)
@@ -161,6 +165,7 @@ impl Book {
 
     /// Open a workbook from a file path; the format is chosen by extension
     /// (`.xlsx`, `.ic`/`.icalc`, `.csv` — anything else is an error).
+    #[cfg(feature = "xlsx")]
     pub fn open(path: &str) -> Result<Book> {
         let ext = Path::new(path)
             .extension()
@@ -198,6 +203,7 @@ impl Book {
     }
 
     /// Save to a file path; format by extension. Refuses to overwrite unless asked.
+    #[cfg(feature = "xlsx")]
     pub fn save(&self, path: &str, overwrite: bool) -> Result<()> {
         let ext = Path::new(path)
             .extension()

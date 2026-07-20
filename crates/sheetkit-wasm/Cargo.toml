@@ -1,0 +1,15 @@
+[package]
+name = "sheetkit-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "wasm-bindgen bindings for sheetkit: the LLM spreadsheet tool surface in the browser"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# no default features: the xlsx feature pulls C compression (zstd/bzip2) that
+# doesn't build on wasm32 — browsers exchange engine bytes and CSV instead.
+sheetkit = { path = "../sheetkit", default-features = false }
+wasm-bindgen = "0.2"

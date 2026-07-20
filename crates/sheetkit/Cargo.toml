@@ -5,9 +5,16 @@ edition.workspace = true
 license.workspace = true
 description.workspace = true
 
+[features]
+default = ["xlsx"]
+# xlsx import/export and path-based open/save live in the `ironcalc` I/O crate,
+# whose zip dependency builds C (zstd-sys, bzip2-sys). Engine, verbs, views and
+# deltas need only `ironcalc_base` — disable this feature to build for wasm.
+xlsx = ["dep:ironcalc"]
+
 [dependencies]
 ironcalc_base.workspace = true
-ironcalc.workspace = true
+ironcalc = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 
