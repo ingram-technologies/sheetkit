@@ -13,7 +13,7 @@ jobs:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup component add rustfmt
       - run: cargo fmt --all --check
 
@@ -21,7 +21,7 @@ jobs:
     name: test (native)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
@@ -29,7 +29,7 @@ jobs:
     name: check (wasm32)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
       - run: rustup target add wasm32-unknown-unknown
       # The core crate and the bindings must keep building without the xlsx
